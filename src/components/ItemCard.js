@@ -15,6 +15,7 @@ import {
   isTrackingOpened,
 } from "../utils/constants";
 import { useTheme } from "../context/ThemeContext";
+import ExpiryPill from "./ExpiryPill";
 
 export const ITEM_CARD_WIDTH = 172;
 
@@ -28,6 +29,8 @@ export default function ItemCard({ item, onPress, onStep }) {
 
   const bigValue = tracking ? `${item.openedPercent}%` : `${item.quantity}`;
   const controlCaption = tracking ? "opened unit" : item.unit;
+  const decreaseLabel = tracking ? "Use 10 percent" : `Use one ${item.unit}`;
+  const increaseLabel = tracking ? "Add 10 percent" : `Add one ${item.unit}`;
 
   const handleStep = (dir) => {
     if (onStep) {
@@ -36,7 +39,13 @@ export default function ItemCard({ item, onPress, onStep }) {
   };
 
   return (
-    <TouchableOpacity activeOpacity={0.7} style={styles.card} onPress={onPress}>
+    <TouchableOpacity
+      activeOpacity={0.7}
+      style={styles.card}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${item.name}, ${item.quantity} ${item.unit}. Open details`}
+    >
       <View style={styles.imageWrap}>
         {hasImage ? (
           <Image source={{ uri: item.imageUri }} style={styles.image} />
@@ -80,6 +89,9 @@ export default function ItemCard({ item, onPress, onStep }) {
           {item.quantity} {item.unit}
           {tracking ? " sealed" : ""}
         </Text>
+        <View style={styles.pillRow}>
+          <ExpiryPill item={item} />
+        </View>
       </View>
 
       <View style={styles.controlRow}>
@@ -88,6 +100,8 @@ export default function ItemCard({ item, onPress, onStep }) {
           style={styles.stepButton}
           onPress={() => handleStep(-1)}
           hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+          accessibilityRole="button"
+          accessibilityLabel={decreaseLabel}
         >
           <MaterialCommunityIcons name="minus" size={18} color={colors.accent} />
         </TouchableOpacity>
@@ -104,6 +118,8 @@ export default function ItemCard({ item, onPress, onStep }) {
           style={styles.stepButton}
           onPress={() => handleStep(1)}
           hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+          accessibilityRole="button"
+          accessibilityLabel={increaseLabel}
         >
           <MaterialCommunityIcons name="plus" size={18} color={colors.accent} />
         </TouchableOpacity>
@@ -182,6 +198,10 @@ const createStyles = (colors) =>
       fontSize: 13,
       color: colors.textSecondary,
       marginTop: 4,
+    },
+    pillRow: {
+      marginTop: 6,
+      minHeight: 20,
     },
     controlRow: {
       flexDirection: "row",

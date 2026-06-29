@@ -14,6 +14,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useInventory } from "../context/InventoryContext";
 import { useTheme } from "../context/ThemeContext";
 import EmptyState from "../components/EmptyState";
+import { haptics } from "../utils/haptics";
 import {
   SPACING,
   RADIUS,
@@ -53,6 +54,7 @@ export default function ShoppingScreen({ navigation }) {
 
   const markBought = (item) => {
     const q = item.quantity + 1;
+    haptics.success();
     updateItem(
       item.id,
       { quantity: q },

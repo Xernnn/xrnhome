@@ -37,7 +37,8 @@
           "cameraPermission": "PantryPal needs access to your camera so you can take photos of your kitchen items."
         }
       ],
-      "expo-font"
+      "expo-font",
+      "@react-native-community/datetimepicker"
     ],
     "extra": {
       "eas": {

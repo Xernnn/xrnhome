@@ -17,6 +17,7 @@ import { useInventory, computeStep } from "../context/InventoryContext";
 import { useTheme } from "../context/ThemeContext";
 import CategoryBadge from "../components/CategoryBadge";
 import EmptyState from "../components/EmptyState";
+import { haptics } from "../utils/haptics";
 import {
   SPACING,
   RADIUS,
@@ -25,6 +26,10 @@ import {
   getStorageMeta,
   hexToRgba,
   isTrackingOpened,
+  getExpiryStatus,
+  getExpiryColor,
+  getExpiryLabel,
+  formatExpiryDate,
 } from "../utils/constants";
 
 const formatDate = (iso) => {
@@ -81,6 +86,8 @@ export default function ItemDetailScreen({ navigation, route }) {
   const meta = getCategoryMeta(item.category);
   const storageMeta = getStorageMeta(item.storageLocation);
   const tracking = isTrackingOpened(item);
+  const expiryStatus = getExpiryStatus(item);
+  const expiryColor = getExpiryColor(expiryStatus, colors);
 
   const handleUse = () => {
     if (item.quantity <= 0) {
@@ -90,6 +97,7 @@ export default function ItemDetailScreen({ navigation, route }) {
     const performUse = () => {
       const before = item.quantity;
       const after = before - 1;
+      haptics.light();
       updateItem(
         item.id,
         { quantity: after },
@@ -121,6 +129,7 @@ export default function ItemDetailScreen({ navigation, route }) {
     }
     const before = item.quantity;
     const after = before + amount;
+    haptics.success();
     updateItem(
       item.id,
       { quantity: after },
@@ -146,6 +155,7 @@ export default function ItemDetailScreen({ navigation, route }) {
             text: "Remove",
             style: "destructive",
             onPress: () => {
+              haptics.warning();
               deleteItem(item.id);
               navigation.goBack();
             },
@@ -153,11 +163,13 @@ export default function ItemDetailScreen({ navigation, route }) {
         ]
       );
     } else if (result.changes) {
+      haptics.light();
       updateItem(item.id, result.changes, result.historyEntry);
     }
   };
 
   const toggleRecurring = (value) => {
+    haptics.selection();
     updateItem(
       item.id,
       { recurring: value, neverRecommend: value ? false : item.neverRecommend },
@@ -168,13 +180,14 @@ export default function ItemDetailScreen({ navigation, route }) {
   const handleDelete = () => {
     Alert.alert(
       "Delete item",
-      `Are you sure you want to delete "${item.name}"? This cannot be undone.`,
+      `Remove "${item.name}" from your kitchen? You'll get a brief chance to undo.`,
       [
         { text: "Cancel", style: "cancel" },
         {
           text: "Delete",
           style: "destructive",
           onPress: () => {
+            haptics.warning();
             deleteItem(item.id);
             navigation.goBack();
           },
@@ -274,6 +287,35 @@ export default function ItemDetailScreen({ navigation, route }) {
               </Text>
             </View>
           </View>
+
+          {item.expiryDate ? (
+            <View
+              style={[
+                styles.expiryBanner,
+                { backgroundColor: hexToRgba(expiryColor, 0.14) },
+              ]}
+            >
+              <MaterialCommunityIcons
+                name={
+                  expiryStatus === "expired"
+                    ? "alert-circle"
+                    : expiryStatus === "soon"
+                    ? "clock-alert-outline"
+                    : "calendar-check-outline"
+                }
+                size={20}
+                color={expiryColor}
+              />
+              <View style={styles.expiryTextWrap}>
+                <Text style={[styles.expiryStatusText, { color: expiryColor }]}>
+                  {getExpiryLabel(item)}
+                </Text>
+                <Text style={styles.expiryDateText}>
+                  {formatExpiryDate(item.expiryDate)}
+                </Text>
+              </View>
+            </View>
+          ) : null}
 
           <View style={styles.infoCardsRow}>
             <View style={styles.infoCard}>
@@ -510,6 +552,25 @@ const createStyles = (colors) =>
     locationBadgeText: {
       fontSize: 13,
       fontWeight: "600",
+    },
+    expiryBanner: {
+      flexDirection: "row",
+      alignItems: "center",
+      borderRadius: RADIUS.card,
+      padding: SPACING.card,
+      marginBottom: SPACING.card,
+    },
+    expiryTextWrap: {
+      marginLeft: SPACING.card,
+    },
+    expiryStatusText: {
+      fontSize: 15,
+      fontWeight: "700",
+    },
+    expiryDateText: {
+      fontSize: 13,
+      color: colors.textSecondary,
+      marginTop: 2,
     },
     infoCardsRow: {
       flexDirection: "row",

@@ -18,6 +18,8 @@ import ShoppingScreen from "./src/screens/ShoppingScreen";
 import AddItemScreen from "./src/screens/AddItemScreen";
 import ItemDetailScreen from "./src/screens/ItemDetailScreen";
 import EditItemScreen from "./src/screens/EditItemScreen";
+import SettingsScreen from "./src/screens/SettingsScreen";
+import UndoToast from "./src/components/UndoToast";
 
 const HomeStackNav = createStackNavigator();
 const ShoppingStackNav = createStackNavigator();
@@ -97,6 +99,8 @@ function RootNavigation() {
               iconName = "silverware-fork-knife";
             } else if (route.name === "Shopping") {
               iconName = "cart-outline";
+            } else if (route.name === "Settings") {
+              iconName = "cog-outline";
             }
             return (
               <MaterialCommunityIcons
@@ -110,7 +114,9 @@ function RootNavigation() {
       >
         <Tab.Screen name="My Kitchen" component={HomeStack} />
         <Tab.Screen name="Shopping" component={ShoppingStack} />
+        <Tab.Screen name="Settings" component={SettingsScreen} />
       </Tab.Navigator>
+      <UndoToast />
     </NavigationContainer>
   );
 }
