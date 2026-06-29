@@ -1,0 +1,47 @@
+{
+  "expo": {
+    "name": "PantryPal",
+    "slug": "pantrypal",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#FAFAFA"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "PantryPal needs access to your camera so you can take photos of your kitchen items.",
+        "NSPhotoLibraryUsageDescription": "PantryPal needs access to your photo library so you can choose photos of your kitchen items."
+      }
+    },
+    "android": {
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.RECORD_AUDIO"
+      ]
+    },
+    "web": {},
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "PantryPal needs access to your photos so you can attach images to your kitchen items.",
+          "cameraPermission": "PantryPal needs access to your camera so you can take photos of your kitchen items."
+        }
+      ],
+      "expo-font"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "4ecce614-3535-41a1-bde6-606c6be57e81"
+      }
+    }
+  }
+}

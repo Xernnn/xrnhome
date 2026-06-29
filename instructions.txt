@@ -1,0 +1,338 @@
+You are an expert React Native developer using Expo. Build me a complete, fully functional mobile app called **"PantryPal"** — a kitchen ingredient inventory tracker inspired by the "Kitchen Storage" section of KitchenPal. This is a one-shot build: every file, every screen, every component must be complete and working. Do not leave placeholders, TODOs, or stub functions.
+
+***
+
+## Tech Stack
+
+- **Framework**: React Native with Expo (SDK 51+)
+- **Navigation**: `@react-navigation/native` with `@react-navigation/bottom-tabs` and `@react-navigation/stack`
+- **Storage**: `@react-native-async-storage/async-storage` — all data stored locally on-device, no backend
+- **Camera/Image**: `expo-image-picker` for photo capture and gallery selection
+- **Icons**: `@expo/vector-icons` (MaterialCommunityIcons or Ionicons)
+- **UI**: Pure React Native StyleSheet — no third-party UI libraries. Design should be clean, modern, and functional. Prioritize usability over decoration.
+- **State management**: React Context + useReducer for global state (no Redux, no Zustand)
+
+***
+
+## App Structure
+
+```
+pantrypal/
+├── App.js
+├── app.json
+├── package.json
+├── src/
+│   ├── context/
+│   │   └── InventoryContext.js
+│   ├── screens/
+│   │   ├── HomeScreen.js
+│   │   ├── StorageScreen.js
+│   │   ├── AddItemScreen.js
+│   │   ├── ItemDetailScreen.js
+│   │   └── EditItemScreen.js
+│   ├── components/
+│   │   ├── ItemCard.js
+│   │   ├── CategoryBadge.js
+│   │   ├── QuantityControl.js
+│   │   ├── EmptyState.js
+│   │   └── SearchBar.js
+│   └── utils/
+│       ├── storage.js
+│       └── constants.js
+```
+
+***
+
+## Data Model
+
+Each inventory item is a JavaScript object with this exact shape:
+
+```js
+{
+  id: string,                    // uuid (Date.now() + Math.random())
+  name: string,                  // e.g. "Soy Sauce"
+  category: string,              // from CATEGORIES list
+  storageLocation: string,       // "Pantry" | "Fridge" | "Freezer" | "Counter"
+  imageUri: string | null,       // local file URI from camera/gallery
+  quantity: number,              // how many sealed/unopened units (e.g. 3 bottles)
+  unit: string,                  // unit for quantity: "pcs", "bottles", "cans", "bags", "boxes"
+  openedAmount: number | null,   // how much of the currently opened unit remains (e.g. 250)
+  openedUnit: string | null,     // unit for openedAmount: "g", "ml", "L", "kg", "tbsp", "tsp"
+  note: string,                  // optional free text note
+  createdAt: string,             // ISO date string
+  updatedAt: string,             // ISO date string
+  history: Array<{               // log of quantity/amount updates (max 20 entries kept)
+    date: string,                // ISO date
+    action: string,              // e.g. "Added 2 units", "Used 50ml", "Restocked"
+    quantityBefore: number,
+    quantityAfter: number,
+  }>
+}
+```
+
+***
+
+## CATEGORIES (constants.js)
+
+Define these exactly in `src/utils/constants.js`:
+
+```js
+export const CATEGORIES = [
+  { label: "Vegetables", icon: "carrot", color: "#4CAF50" },
+  { label: "Fruits", icon: "food-apple", color: "#FF9800" },
+  { label: "Meat & Seafood", icon: "food-steak", color: "#F44336" },
+  { label: "Dairy & Eggs", icon: "egg", color: "#FFF176" },
+  { label: "Grains & Pasta", icon: "grain", color: "#A1887F" },
+  { label: "Condiments & Sauces", icon: "bottle-soda", color: "#9C27B0" },
+  { label: "Spices & Herbs", icon: "shaker", color: "#FF7043" },
+  { label: "Beverages", icon: "cup", color: "#29B6F6" },
+  { label: "Snacks", icon: "cookie", color: "#FFCA28" },
+  { label: "Frozen", icon: "snowflake", color: "#80DEEA" },
+  { label: "Canned & Jarred", icon: "food", color: "#78909C" },
+  { label: "Baking", icon: "cake-variant", color: "#F48FB1" },
+  { label: "Other", icon: "dots-horizontal", color: "#BDBDBD" },
+];
+
+export const STORAGE_LOCATIONS = ["Pantry", "Fridge", "Freezer", "Counter"];
+
+export const QUANTITY_UNITS = ["pcs", "bottles", "cans", "bags", "boxes", "jars", "packs", "rolls", "bunches"];
+
+export const OPENED_UNITS = ["g", "kg", "ml", "L", "tbsp", "tsp", "cups", "oz", "lbs"];
+```
+
+***
+
+## Screen Specifications
+
+### 1. HomeScreen (Tab: "My Kitchen")
+
+This is the main screen — the heart of the app. It should feel like KitchenPal's kitchen storage view.
+
+**Layout:**
+- Header with app logo text "PantryPal" and a `+` button (navigates to AddItemScreen)
+- A `SearchBar` component at the top (filters items by name in real time)
+- A horizontal scrollable row of storage location filter chips: "All", "Pantry", "Fridge", "Freezer", "Counter" — tapping one filters the item list
+- Below the filters, items are grouped by category. Each category group shows:
+  - Category header row: category icon + category name + item count badge
+  - Horizontal scrollable row of `ItemCard` components for that category
+- If no items exist, show `EmptyState` component with a friendly message and a "Add your first item" button
+- Show a total item count somewhere subtle (e.g. "24 items in your kitchen")
+
+**Behavior:**
+- Search + storage location filter work simultaneously (both apply at once)
+- Categories with zero items (after filtering) are hidden
+- Tapping an ItemCard navigates to ItemDetailScreen
+
+***
+
+### 2. StorageScreen (Tab: "Storage")
+
+A different view of the same data, organised by storage location instead of category.
+
+**Layout:**
+- Header: "Storage Overview"
+- 4 large tappable cards (Pantry, Fridge, Freezer, Counter), each showing:
+  - Location icon (relevant emoji or MaterialCommunityIcons icon)
+  - Location name
+  - Item count
+  - A compact horizontal preview strip of the first 3–4 item images (or colored category dot if no image)
+- Tapping a location card expands/navigates to a full list of items in that location, grouped by category, same ItemCard style as HomeScreen
+
+***
+
+### 3. AddItemScreen (Modal/Stack push from HomeScreen `+` button)
+
+A form screen to add a new item. All required fields must be validated before saving.
+
+**Form fields (in order):**
+
+1. **Photo** — Large tappable image area at the top (full width, aspect ratio 16:9 or square). Shows placeholder icon if no image. Tapping opens an ActionSheet with two options: "Take Photo" (camera) and "Choose from Library". Uses `expo-image-picker`. Image is stored as local URI.
+
+2. **Name** — TextInput, required. Placeholder: "e.g. Olive Oil"
+
+3. **Category** — Horizontal scrollable chip selector showing all CATEGORIES with their icon and color. Selected chip is highlighted. Required.
+
+4. **Storage Location** — Segmented control or radio-style row: Pantry / Fridge / Freezer / Counter. Required.
+
+5. **Quantity (sealed units)** — Row with label "Sealed Units", a number input, and a unit picker (dropdown or scrollable chips) from QUANTITY_UNITS. Default quantity: 1. Required.
+
+6. **Opened Unit Amount** — Optional section titled "Currently Opened". Toggle switch to enable/disable this section. When enabled, shows:
+   - Number input for amount (e.g. 250)
+   - Unit picker from OPENED_UNITS (e.g. ml)
+
+7. **Note** — Multiline TextInput, optional. Placeholder: "Any notes about this item..."
+
+**Save button:** Fixed at the bottom. Validates required fields. On save, creates item with current ISO timestamps, adds to context/storage, navigates back.
+
+***
+
+### 4. ItemDetailScreen (pushed from ItemCard tap)
+
+A rich detail view for one item.
+
+**Layout:**
+- Full-width hero image at top (or a large colored category banner if no image). Show category icon centered on the banner.
+- Item name as large heading below the hero
+- Category badge (colored chip with icon)
+- Storage location badge
+- Two info cards side by side:
+  - "Sealed Units": shows `quantity` + `unit` (e.g. "3 bottles")
+  - "Opened": shows `openedAmount` + `openedUnit` or "Not opened" if null
+- Note section (only shown if note is non-empty)
+- **Quick Update section**: Two rows:
+  - Row 1: "Use" button (decreases quantity by 1 with confirmation if going to 0) and a "Restock" button (opens a small inline input to add units)
+  - Row 2: If opened section exists, show a text input pre-filled with openedAmount to quickly update how much is left, with a "Update" confirm button
+- **History section**: Shows the last 10 history entries as a timeline list (date + action string). If empty, shows "No history yet."
+- Edit button in the header (navigates to EditItemScreen) and a Delete button (with confirmation alert)
+
+***
+
+### 5. EditItemScreen
+
+Same form layout as AddItemScreen, pre-populated with the existing item's data. On save, updates the item in context/storage, appends a history entry ("Updated item details"), navigates back to ItemDetailScreen.
+
+***
+
+## Component Specifications
+
+### ItemCard
+
+A compact card showing:
+- Item photo (if exists) or a colored square with category icon
+- Item name (truncated to 1–2 lines)
+- Quantity + unit (e.g. "3 bottles")
+- Opened indicator dot (small colored dot if openedAmount is set)
+- Small category color strip at the bottom edge of the card
+
+Dimensions: ~140px wide, ~180px tall. Rounded corners (12px). Shadow. Tappable with press feedback.
+
+### SearchBar
+
+A styled TextInput with a search icon on the left and a clear (×) button on the right when text is present. Gray background, rounded pill shape.
+
+### QuantityControl
+
+A reusable row component with a minus button, a centered number display, and a plus button. Used in AddItemScreen and for quick update in ItemDetailScreen. Buttons are circular, 36px. Prevents going below 0.
+
+### CategoryBadge
+
+A small pill chip with the category's icon and label, styled with the category's color as a light background tint and the color as text/icon color.
+
+### EmptyState
+
+A centered vertical layout with a large icon (use MaterialCommunityIcons "fridge-outline" or similar), a title, a subtitle, and an optional action button. Used when a list is empty.
+
+***
+
+## Context & Storage (InventoryContext.js + storage.js)
+
+`storage.js` must export:
+```js
+export const loadItems = async () => { ... }   // reads from AsyncStorage key "pantrypal_items"
+export const saveItems = async (items) => { ... } // writes array to AsyncStorage
+```
+
+`InventoryContext.js` must:
+- Load items from AsyncStorage on app startup
+- Expose: `items`, `addItem`, `updateItem`, `deleteItem`, `getItemById`
+- `addItem(itemData)`: generates id, sets createdAt/updatedAt, initializes history with "Item added" entry, saves to storage
+- `updateItem(id, changes)`: merges changes, updates updatedAt, appends history entry, saves to storage
+- `deleteItem(id)`: removes item, saves to storage
+- Wrap the app in a loading state — show a simple centered ActivityIndicator while AsyncStorage loads
+
+***
+
+## Navigation Structure
+
+```
+App.js
+└── NavigationContainer
+    └── BottomTabNavigator
+        ├── Tab: "My Kitchen" → HomeStack
+        │     ├── HomeScreen
+        │     ├── ItemDetailScreen
+        │     └── EditItemScreen
+        ├── Tab: "Storage" → StorageStack
+        │     └── StorageScreen (with internal expand behavior)
+        └── (optional) Tab: "Add" center tab → modal AddItemScreen
+    └── AddItemScreen (presented as modal from HomeStack header button)
+```
+
+The `+` FAB / header button in HomeScreen should push AddItemScreen as a full-screen modal (presentation: "modal" in stack navigator options).
+
+***
+
+## Design Guidelines
+
+- **Color palette**: Clean white/off-white backgrounds (`#FAFAFA`, `#F5F5F5`). Accent color: `#2E7D32` (deep green, food/kitchen feel). Text: `#212121` primary, `#757575` secondary. Cards: white with subtle shadow.
+- **Typography**: System font (SF Pro on iOS, Roboto on Android). Bold headings, regular body. Font sizes: 24px (screen title), 18px (section header), 16px (body/card title), 13px (metadata/badges).
+- **Spacing**: 16px standard padding, 12px gap between cards, 8px inner padding for small elements.
+- **Radius**: 12px for cards, 8px for buttons/inputs, 99px for pills/chips.
+- **Shadows**: `shadowColor: '#000', shadowOffset: {width:0, height:2}, shadowOpacity: 0.08, shadowRadius: 8, elevation: 3`
+- **Feedback**: All buttons must have `activeOpacity={0.7}` or `Pressable` with pressed state visual feedback. Form inputs must have focused border color change.
+- **Empty states**: Every list screen must handle the empty state gracefully with the `EmptyState` component.
+
+***
+
+## package.json dependencies
+
+Include exactly these in `package.json`:
+
+```json
+{
+  "dependencies": {
+    "expo": "~51.0.0",
+    "expo-status-bar": "~1.12.1",
+    "expo-image-picker": "~15.0.7",
+    "react": "18.2.0",
+    "react-native": "0.74.1",
+    "@react-native-async-storage/async-storage": "1.23.1",
+    "@react-navigation/native": "^6.1.17",
+    "@react-navigation/bottom-tabs": "^6.5.20",
+    "@react-navigation/stack": "^6.3.29",
+    "react-native-screens": "~3.31.1",
+    "react-native-safe-area-context": "4.10.1",
+    "@expo/vector-icons": "^14.0.2",
+    "react-native-gesture-handler": "~2.16.1"
+  }
+}
+```
+
+***
+
+## Critical Implementation Notes
+
+1. **All screens must be fully implemented** — no "// TODO" or empty return statements.
+2. **Image picker**: Request permissions before opening camera. Handle permission denied gracefully with an Alert.
+3. **AsyncStorage**: All reads/writes must be in try/catch with error logging.
+4. **History entries**: Cap at 20 entries per item (slice the oldest off when adding new ones) to avoid unbounded memory growth.
+5. **Keyboard handling**: Wrap form screens in `KeyboardAvoidingView` with correct `behavior` per platform (`padding` on iOS, `height` on Android). Add `ScrollView` so long forms are scrollable.
+6. **Numbers**: All quantity/amount inputs must use `keyboardType="numeric"`. Validate that values are valid positive numbers before saving.
+7. **Navigation header**: HomeScreen header should have the app title on the left and a `+` icon button on the right.
+8. **Delete confirmation**: Always show an `Alert.alert` with Cancel and Delete (destructive) options before deleting an item.
+9. **Expo Go compatibility**: The app must run in Expo Go without custom native modules (all chosen packages are Expo-compatible).
+10. **No hardcoded sample data**: The app starts empty and is populated by the user.
+
+***
+
+## Deliverable
+
+Output every file in full, in order:
+1. `package.json`
+2. `app.json`
+3. `App.js`
+4. `src/utils/constants.js`
+5. `src/utils/storage.js`
+6. `src/context/InventoryContext.js`
+7. `src/components/SearchBar.js`
+8. `src/components/ItemCard.js`
+9. `src/components/CategoryBadge.js`
+10. `src/components/QuantityControl.js`
+11. `src/components/EmptyState.js`
+12. `src/screens/HomeScreen.js`
+13. `src/screens/StorageScreen.js`
+14. `src/screens/AddItemScreen.js`
+15. `src/screens/ItemDetailScreen.js`
+16. `src/screens/EditItemScreen.js`
+
+Each file must be complete and immediately usable. Do not truncate any file. After all files, provide a brief "How to run" section with the exact commands to install and start the app with Expo Go.
