@@ -1,3 +1,21 @@
+// ---------------------------------------------------------------------------
+// PantryPal data model (v2) — quantity semantics (read this!)
+//
+//   quantity      : number  -> count of FULL, UNOPENED units you have.
+//   openedPercent : number|null -> remaining percentage (0..100, in 10% steps)
+//                                   of ONE currently-open unit. `null` means
+//                                   nothing is currently open.
+//
+//   Physical total = quantity + (openedPercent != null ? 1 : 0)
+//
+//   Example: "2 corn cans, one is 40% left" -> quantity: 1, openedPercent: 40
+//            (1 sealed/unopened can + 1 open can at 40%).
+//
+//   expiryDate    : string|null -> ISO date of expiry (null = no expiry set).
+//   recurring     : boolean     -> show on the Shopping list when low.
+//   neverRecommend: boolean     -> never suggest for shopping again.
+// ---------------------------------------------------------------------------
+
 export const LIGHT_COLORS = {
   background: "#FAFAFA",
   surface: "#FFFFFF",
@@ -8,6 +26,7 @@ export const LIGHT_COLORS = {
   textSecondary: "#757575",
   border: "#E0E0E0",
   danger: "#F44336",
+  warning: "#E67E00",
   white: "#FFFFFF",
   shadow: "#000000",
   tabBar: "#FFFFFF",
@@ -23,6 +42,7 @@ export const DARK_COLORS = {
   textSecondary: "#9E9E9E",
   border: "#3A3A3A",
   danger: "#EF5350",
+  warning: "#FFB74D",
   white: "#FFFFFF",
   shadow: "#000000",
   tabBar: "#1A1A1A",
@@ -93,6 +113,7 @@ export const STORAGE_LOCATION_META = {
 export const MAX_HISTORY_ENTRIES = 20;
 export const OPENED_STEP = 10;
 export const ALMOST_OUT_PERCENT = 20;
+export const EXPIRING_SOON_DAYS = 4;
 
 export const getCategoryMeta = (label) =>
   CATEGORIES.find((c) => c.label === label) || CATEGORIES[CATEGORIES.length - 1];
@@ -122,6 +143,126 @@ export const isAlmostOut = (item) => {
   return item.openedPercent <= ALMOST_OUT_PERCENT;
 };
 
+// Total physical units = sealed units + (1 if a unit is currently open).
+export const getTotalUnits = (item) =>
+  (item?.quantity || 0) + (isTrackingOpened(item) ? 1 : 0);
+
+// Human-readable breakdown used in the forms so the model is never ambiguous.
+export const summarizeUnits = (quantity, unit, openedPercent) => {
+  const tracking =
+    openedPercent !== null && openedPercent !== undefined && !Number.isNaN(openedPercent);
+  const total = (quantity || 0) + (tracking ? 1 : 0);
+  const unitLabel = unit || "units";
+  if (tracking) {
+    return `${total} ${unitLabel} total · ${quantity} sealed + 1 open at ${openedPercent}%`;
+  }
+  return `${total} ${unitLabel} total · all sealed`;
+};
+
+// Rounds a value to the nearest OPENED_STEP and clamps to 0..100.
+export const roundPercent = (value) => {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return 0;
+  }
+  const rounded = Math.round(value / OPENED_STEP) * OPENED_STEP;
+  return Math.max(0, Math.min(100, rounded));
+};
+
+// ----- Expiry helpers (purely in-app/visual; no notifications) -------------
+
+const startOfDay = (date) => {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
+};
+
+export const daysUntilExpiry = (item) => {
+  if (!item || !item.expiryDate) {
+    return null;
+  }
+  const expiry = new Date(item.expiryDate);
+  if (Number.isNaN(expiry.getTime())) {
+    return null;
+  }
+  const today = startOfDay(new Date());
+  const target = startOfDay(expiry);
+  return Math.round((target.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+};
+
+// Returns "expired" | "soon" | "fresh" | null.
+export const getExpiryStatus = (item) => {
+  const days = daysUntilExpiry(item);
+  if (days === null) {
+    return null;
+  }
+  if (days < 0) {
+    return "expired";
+  }
+  if (days <= EXPIRING_SOON_DAYS) {
+    return "soon";
+  }
+  return "fresh";
+};
+
+export const getExpiryLabel = (item) => {
+  const days = daysUntilExpiry(item);
+  if (days === null) {
+    return "";
+  }
+  if (days < 0) {
+    const ago = Math.abs(days);
+    return ago === 1 ? "Expired 1 day ago" : `Expired ${ago} days ago`;
+  }
+  if (days === 0) {
+    return "Expires today";
+  }
+  if (days === 1) {
+    return "Expires tomorrow";
+  }
+  return `Expires in ${days} days`;
+};
+
+export const getExpiryShortLabel = (item) => {
+  const days = daysUntilExpiry(item);
+  if (days === null) {
+    return "";
+  }
+  if (days < 0) {
+    return "Expired";
+  }
+  if (days === 0) {
+    return "Today";
+  }
+  return `${days}d`;
+};
+
+export const formatExpiryDate = (iso) => {
+  if (!iso) {
+    return "";
+  }
+  try {
+    return new Date(iso).toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+  } catch (e) {
+    return iso;
+  }
+};
+
+export const getExpiryColor = (status, colors) => {
+  if (status === "expired") {
+    return colors.danger;
+  }
+  if (status === "soon") {
+    return colors.warning;
+  }
+  return colors.textSecondary;
+};
+
+// ----- Color helpers --------------------------------------------------------
+
 export const hexToRgba = (hex, alpha) => {
   if (!hex || typeof hex !== "string") {
     return `rgba(0,0,0,${alpha})`;
@@ -137,4 +278,26 @@ export const hexToRgba = (hex, alpha) => {
   const g = parseInt(normalized.substring(2, 4), 16);
   const b = parseInt(normalized.substring(4, 6), 16);
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+};
+
+// Returns a readable text color (#212121 or #FFFFFF) for a given background hex.
+export const getContrastText = (hex) => {
+  if (!hex || typeof hex !== "string") {
+    return "#FFFFFF";
+  }
+  let normalized = hex.replace("#", "");
+  if (normalized.length === 3) {
+    normalized = normalized
+      .split("")
+      .map((c) => c + c)
+      .join("");
+  }
+  const r = parseInt(normalized.substring(0, 2), 16) / 255;
+  const g = parseInt(normalized.substring(2, 4), 16) / 255;
+  const b = parseInt(normalized.substring(4, 6), 16) / 255;
+  const toLinear = (c) =>
+    c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  const luminance =
+    0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b);
+  return luminance > 0.55 ? "#212121" : "#FFFFFF";
 };

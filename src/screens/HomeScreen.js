@@ -15,20 +15,22 @@ import { useTheme } from "../context/ThemeContext";
 import SearchBar from "../components/SearchBar";
 import ItemCard, { ITEM_CARD_WIDTH } from "../components/ItemCard";
 import EmptyState from "../components/EmptyState";
+import { haptics } from "../utils/haptics";
 import {
   SPACING,
   RADIUS,
-  SHADOW,
   CATEGORIES,
   STORAGE_LOCATIONS,
   getCategoryMeta,
+  getExpiryStatus,
+  daysUntilExpiry,
 } from "../utils/constants";
 
 const LOCATION_FILTERS = ["All", ...STORAGE_LOCATIONS];
 
 export default function HomeScreen({ navigation }) {
   const { items, updateItem, deleteItem } = useInventory();
-  const { colors, isDark, toggleTheme } = useTheme();
+  const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
   const [search, setSearch] = useState("");
@@ -44,6 +46,15 @@ export default function HomeScreen({ navigation }) {
       return matchesSearch && matchesLocation;
     });
   }, [items, search, locationFilter]);
+
+  const expiringItems = useMemo(() => {
+    return filteredItems
+      .filter((item) => {
+        const status = getExpiryStatus(item);
+        return status === "expired" || status === "soon";
+      })
+      .sort((a, b) => daysUntilExpiry(a) - daysUntilExpiry(b));
+  }, [filteredItems]);
 
   const groupedByCategory = useMemo(() => {
     return CATEGORIES.map((cat) => ({
@@ -66,11 +77,15 @@ export default function HomeScreen({ navigation }) {
           {
             text: "Remove",
             style: "destructive",
-            onPress: () => deleteItem(item.id),
+            onPress: () => {
+              haptics.warning();
+              deleteItem(item.id);
+            },
           },
         ]
       );
     } else if (result.changes) {
+      haptics.light();
       updateItem(item.id, result.changes, result.historyEntry);
     }
   };
@@ -87,26 +102,6 @@ export default function HomeScreen({ navigation }) {
             {items.length} {items.length === 1 ? "item" : "items"} in your
             kitchen
           </Text>
-        </View>
-        <View style={styles.headerActions}>
-          <TouchableOpacity
-            activeOpacity={0.7}
-            style={styles.iconButton}
-            onPress={toggleTheme}
-          >
-            <MaterialCommunityIcons
-              name={isDark ? "white-balance-sunny" : "weather-night"}
-              size={22}
-              color={colors.textPrimary}
-            />
-          </TouchableOpacity>
-          <TouchableOpacity
-            activeOpacity={0.7}
-            style={styles.addButton}
-            onPress={openAddItem}
-          >
-            <MaterialCommunityIcons name="plus" size={24} color={colors.white} />
-          </TouchableOpacity>
         </View>
       </View>
 
@@ -152,6 +147,46 @@ export default function HomeScreen({ navigation }) {
               );
             })}
           </ScrollView>
+
+          {expiringItems.length > 0 ? (
+            <View style={styles.expiringBlock}>
+              <View style={styles.categoryHeader}>
+                <MaterialCommunityIcons
+                  name="clock-alert-outline"
+                  size={20}
+                  color={colors.warning}
+                />
+                <Text style={[styles.categoryName, { color: colors.warning }]}>
+                  Expiring Soon
+                </Text>
+                <View
+                  style={[
+                    styles.countBadge,
+                    { backgroundColor: colors.warning },
+                  ]}
+                >
+                  <Text style={[styles.countBadgeText, { color: colors.white }]}>
+                    {expiringItems.length}
+                  </Text>
+                </View>
+              </View>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.cardsRow}
+              >
+                {expiringItems.map((item) => (
+                  <View key={`exp-${item.id}`} style={styles.cardWrap}>
+                    <ItemCard
+                      item={item}
+                      onPress={() => openDetail(item.id)}
+                      onStep={handleStep}
+                    />
+                  </View>
+                ))}
+              </ScrollView>
+            </View>
+          ) : null}
 
           {groupedByCategory.length === 0 ? (
             <EmptyState
@@ -246,27 +281,6 @@ const createStyles = (colors) =>
       color: colors.textSecondary,
       marginTop: 2,
     },
-    headerActions: {
-      flexDirection: "row",
-      alignItems: "center",
-    },
-    iconButton: {
-      width: 44,
-      height: 44,
-      borderRadius: 22,
-      backgroundColor: colors.surfaceAlt,
-      alignItems: "center",
-      justifyContent: "center",
-      marginRight: SPACING.inner,
-    },
-    addButton: {
-      width: 44,
-      height: 44,
-      borderRadius: 22,
-      backgroundColor: colors.accent,
-      alignItems: "center",
-      justifyContent: "center",
-    },
     scroll: {
       flex: 1,
     },
@@ -305,6 +319,10 @@ const createStyles = (colors) =>
       paddingHorizontal: SPACING.screen,
       marginTop: SPACING.card,
       marginBottom: 4,
+    },
+    expiringBlock: {
+      marginTop: SPACING.card,
+      marginBottom: SPACING.inner,
     },
     categoryBlock: {
       marginTop: SPACING.card,

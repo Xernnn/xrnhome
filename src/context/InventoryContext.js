@@ -5,15 +5,18 @@ import React, {
   useReducer,
   useMemo,
   useCallback,
+  useRef,
 } from "react";
 import { View, ActivityIndicator, StyleSheet } from "react-native";
 import { loadItems, saveItems } from "../utils/storage";
+import { deleteImage } from "../utils/images";
 import {
   MAX_HISTORY_ENTRIES,
   OPENED_STEP,
   QUANTITY_UNITS,
   categoryExists,
   isTrackingOpened,
+  roundPercent,
 } from "../utils/constants";
 import { useTheme } from "./ThemeContext";
 
@@ -22,6 +25,7 @@ const InventoryContext = createContext(null);
 const initialState = {
   items: [],
   loading: true,
+  undo: null, // { item, index } — the most recently deleted item, for undo.
 };
 
 const ACTIONS = {
@@ -29,12 +33,17 @@ const ACTIONS = {
   ADD_ITEM: "ADD_ITEM",
   UPDATE_ITEM: "UPDATE_ITEM",
   DELETE_ITEM: "DELETE_ITEM",
+  RESTORE_ITEM: "RESTORE_ITEM",
+  CLEAR_UNDO: "CLEAR_UNDO",
+  REPLACE_ALL: "REPLACE_ALL",
 };
 
 function reducer(state, action) {
   switch (action.type) {
     case ACTIONS.SET_ITEMS:
       return { ...state, items: action.payload, loading: false };
+    case ACTIONS.REPLACE_ALL:
+      return { ...state, items: action.payload, undo: null };
     case ACTIONS.ADD_ITEM:
       return { ...state, items: [action.payload, ...state.items] };
     case ACTIONS.UPDATE_ITEM:
@@ -44,11 +53,30 @@ function reducer(state, action) {
           item.id === action.payload.id ? action.payload : item
         ),
       };
-    case ACTIONS.DELETE_ITEM:
+    case ACTIONS.DELETE_ITEM: {
+      const index = state.items.findIndex((i) => i.id === action.payload);
+      if (index === -1) {
+        return state;
+      }
+      const removed = state.items[index];
       return {
         ...state,
-        items: state.items.filter((item) => item.id !== action.payload),
+        items: state.items.filter((i) => i.id !== action.payload),
+        undo: { item: removed, index },
       };
+    }
+    case ACTIONS.RESTORE_ITEM: {
+      if (!state.undo) {
+        return state;
+      }
+      const { item, index } = state.undo;
+      const nextItems = [...state.items];
+      const safeIndex = Math.max(0, Math.min(index, nextItems.length));
+      nextItems.splice(safeIndex, 0, item);
+      return { ...state, items: nextItems, undo: null };
+    }
+    case ACTIONS.CLEAR_UNDO:
+      return { ...state, undo: null };
     default:
       return state;
   }
@@ -67,9 +95,7 @@ const capHistory = (history) => {
   return history.slice(history.length - MAX_HISTORY_ENTRIES);
 };
 
-const clampPercent = (value) => Math.max(0, Math.min(100, value));
-
-// Normalizes any stored item (including legacy shapes) into the current model.
+// Normalizes any stored item (including legacy v1 shapes) into the current model.
 const normalizeItem = (raw) => {
   if (!raw || typeof raw !== "object") {
     return null;
@@ -77,7 +103,7 @@ const normalizeItem = (raw) => {
 
   let openedPercent = null;
   if (typeof raw.openedPercent === "number" && !Number.isNaN(raw.openedPercent)) {
-    openedPercent = clampPercent(raw.openedPercent);
+    openedPercent = roundPercent(raw.openedPercent);
   } else if (
     raw.openedAmount !== null &&
     raw.openedAmount !== undefined &&
@@ -85,6 +111,14 @@ const normalizeItem = (raw) => {
   ) {
     // Legacy item had an opened amount in g/ml — treat the open unit as full.
     openedPercent = 100;
+  }
+
+  let expiryDate = null;
+  if (raw.expiryDate) {
+    const parsed = new Date(raw.expiryDate);
+    if (!Number.isNaN(parsed.getTime())) {
+      expiryDate = parsed.toISOString();
+    }
   }
 
   return {
@@ -99,6 +133,7 @@ const normalizeItem = (raw) => {
         : 0,
     unit: typeof raw.unit === "string" && raw.unit ? raw.unit : QUANTITY_UNITS[0],
     openedPercent,
+    expiryDate,
     recurring: !!raw.recurring,
     neverRecommend: !!raw.neverRecommend,
     note: typeof raw.note === "string" ? raw.note : "",
@@ -111,6 +146,10 @@ const normalizeItem = (raw) => {
 /**
  * Pure helper that computes the result of a +/- step on an item card.
  * dir > 0 increases, dir < 0 decreases.
+ *
+ * Semantics: `quantity` = sealed units, `openedPercent` = the one open unit's
+ * remaining % (null = nothing open). See constants.js for the full model.
+ *
  * Returns { changes, historyEntry, willRemove }.
  */
 export function computeStep(item, dir) {
@@ -121,7 +160,7 @@ export function computeStep(item, dir) {
 
   if (tracking) {
     if (dir > 0) {
-      const next = clampPercent(item.openedPercent + OPENED_STEP);
+      const next = roundPercent(item.openedPercent + OPENED_STEP);
       if (next === item.openedPercent) {
         return { changes: null, historyEntry: null, willRemove: false };
       }
@@ -136,7 +175,7 @@ export function computeStep(item, dir) {
       };
     }
 
-    const next = item.openedPercent - OPENED_STEP;
+    const next = roundPercent(item.openedPercent - OPENED_STEP);
     if (next > 0) {
       return {
         changes: { openedPercent: next },
@@ -212,156 +251,169 @@ export function InventoryProvider({ children }) {
     };
   }, []);
 
-  const persist = useCallback(async (items) => {
-    await saveItems(items);
+  // Single source of truth for persistence: whenever items change (after the
+  // initial load) we save the *current* array. This removes any stale-snapshot
+  // race from individual add/update/delete callbacks.
+  useEffect(() => {
+    if (state.loading) {
+      return;
+    }
+    saveItems(state.items);
+  }, [state.items, state.loading]);
+
+  const addItem = useCallback((itemData) => {
+    const now = new Date().toISOString();
+    const quantity =
+      typeof itemData.quantity === "number" ? itemData.quantity : 0;
+    const openedPercent =
+      itemData.openedPercent === null || itemData.openedPercent === undefined
+        ? null
+        : roundPercent(Number(itemData.openedPercent));
+
+    let expiryDate = null;
+    if (itemData.expiryDate) {
+      const parsed = new Date(itemData.expiryDate);
+      if (!Number.isNaN(parsed.getTime())) {
+        expiryDate = parsed.toISOString();
+      }
+    }
+
+    const newItem = {
+      id: generateId(),
+      name: itemData.name,
+      category: categoryExists(itemData.category) ? itemData.category : "Other",
+      storageLocation: itemData.storageLocation,
+      imageUri: itemData.imageUri ?? null,
+      quantity,
+      unit: itemData.unit || QUANTITY_UNITS[0],
+      openedPercent,
+      expiryDate,
+      recurring: !!itemData.recurring,
+      neverRecommend: false,
+      note: itemData.note ?? "",
+      createdAt: now,
+      updatedAt: now,
+      history: [
+        {
+          date: now,
+          action: "Item added",
+          quantityBefore: 0,
+          quantityAfter: quantity,
+        },
+      ],
+    };
+
+    dispatch({ type: ACTIONS.ADD_ITEM, payload: newItem });
+    return newItem;
   }, []);
 
-  const addItem = useCallback(
-    (itemData) => {
-      const now = new Date().toISOString();
-      const quantity =
-        typeof itemData.quantity === "number" ? itemData.quantity : 0;
-      const openedPercent =
-        itemData.openedPercent === null ||
-        itemData.openedPercent === undefined
-          ? null
-          : clampPercent(Number(itemData.openedPercent));
+  // A ref mirror of state lets the action callbacks stay stable while always
+  // reading the latest items (needed for history merges and undo cleanup).
+  const stateRef = useRef(state);
+  stateRef.current = state;
 
-      const newItem = {
-        id: generateId(),
-        name: itemData.name,
-        category: categoryExists(itemData.category)
-          ? itemData.category
-          : "Other",
-        storageLocation: itemData.storageLocation,
-        imageUri: itemData.imageUri ?? null,
-        quantity,
-        unit: itemData.unit || QUANTITY_UNITS[0],
-        openedPercent,
-        recurring: !!itemData.recurring,
-        neverRecommend: false,
-        note: itemData.note ?? "",
-        createdAt: now,
-        updatedAt: now,
-        history: [
-          {
-            date: now,
-            action: "Item added",
-            quantityBefore: 0,
-            quantityAfter: quantity,
-          },
-        ],
-      };
+  const updateItem = useCallback((id, changes = {}, historyEntry = null) => {
+    const existing = stateRef.current.items.find((item) => item.id === id);
+    if (!existing) {
+      return null;
+    }
 
-      dispatch({ type: ACTIONS.ADD_ITEM, payload: newItem });
-      persist([newItem, ...state.items]);
-      return newItem;
-    },
-    [state.items, persist]
-  );
+    const now = new Date().toISOString();
+    let nextHistory = existing.history ? [...existing.history] : [];
 
-  const updateItem = useCallback(
-    (id, changes = {}, historyEntry = null) => {
-      const existing = state.items.find((item) => item.id === id);
-      if (!existing) {
-        return null;
-      }
+    if (historyEntry) {
+      nextHistory.push({
+        date: now,
+        action: historyEntry.action ?? "Updated item",
+        quantityBefore: historyEntry.quantityBefore ?? existing.quantity ?? 0,
+        quantityAfter:
+          historyEntry.quantityAfter ??
+          (changes.quantity != null ? changes.quantity : existing.quantity) ??
+          0,
+      });
+    }
 
-      const now = new Date().toISOString();
-      let nextHistory = existing.history ? [...existing.history] : [];
+    nextHistory = capHistory(nextHistory);
 
-      if (historyEntry) {
-        nextHistory.push({
-          date: now,
-          action: historyEntry.action ?? "Updated item",
-          quantityBefore:
-            historyEntry.quantityBefore ?? existing.quantity ?? 0,
-          quantityAfter:
-            historyEntry.quantityAfter ??
-            (changes.quantity != null ? changes.quantity : existing.quantity) ??
-            0,
-        });
-      }
+    const merged = {
+      ...existing,
+      ...changes,
+      id: existing.id,
+      createdAt: existing.createdAt,
+      updatedAt: now,
+      history: nextHistory,
+    };
 
-      nextHistory = capHistory(nextHistory);
+    dispatch({ type: ACTIONS.UPDATE_ITEM, payload: merged });
+    return merged;
+  }, []);
 
-      const updated = {
-        ...existing,
-        ...changes,
-        id: existing.id,
-        createdAt: existing.createdAt,
-        updatedAt: now,
-        history: nextHistory,
-      };
+  const deleteItem = useCallback((id) => {
+    // Finalize any previously-pending undo (its image is now safe to remove).
+    const prevUndo = stateRef.current.undo;
+    if (prevUndo && prevUndo.item && prevUndo.item.id !== id) {
+      deleteImage(prevUndo.item.imageUri);
+    }
+    dispatch({ type: ACTIONS.DELETE_ITEM, payload: id });
+  }, []);
 
-      dispatch({ type: ACTIONS.UPDATE_ITEM, payload: updated });
-      persist(state.items.map((item) => (item.id === id ? updated : item)));
-      return updated;
-    },
-    [state.items, persist]
-  );
+  const undoDelete = useCallback(() => {
+    dispatch({ type: ACTIONS.RESTORE_ITEM });
+  }, []);
 
-  const deleteItem = useCallback(
-    (id) => {
-      dispatch({ type: ACTIONS.DELETE_ITEM, payload: id });
-      persist(state.items.filter((item) => item.id !== id));
-    },
-    [state.items, persist]
-  );
+  // Permanently drops the pending undo and cleans up that item's image file.
+  const clearUndo = useCallback(() => {
+    const pending = stateRef.current.undo;
+    if (pending && pending.item) {
+      deleteImage(pending.item.imageUri);
+    }
+    dispatch({ type: ACTIONS.CLEAR_UNDO });
+  }, []);
 
   const getItemById = useCallback(
-    (id) => state.items.find((item) => item.id === id) || null,
-    [state.items]
+    (id) => stateRef.current.items.find((item) => item.id === id) || null,
+    []
   );
 
-  // Applies a +/- step from a card. Returns { removed, willRemove } so the
-  // caller can decide whether to confirm/remove a fully depleted item.
-  const stepItem = useCallback(
-    (id, dir) => {
-      const existing = state.items.find((item) => item.id === id);
-      if (!existing) {
-        return { willRemove: false };
-      }
-      const result = computeStep(existing, dir);
-      if (result.willRemove) {
-        return { willRemove: true };
-      }
-      if (result.changes) {
-        updateItem(id, result.changes, result.historyEntry);
-      }
-      return { willRemove: false };
-    },
-    [state.items, updateItem]
-  );
+  const replaceAllItems = useCallback((rawItems) => {
+    const normalized = Array.isArray(rawItems)
+      ? rawItems.map(normalizeItem).filter(Boolean)
+      : [];
+    dispatch({ type: ACTIONS.REPLACE_ALL, payload: normalized });
+    return normalized.length;
+  }, []);
 
   const value = useMemo(
     () => ({
       items: state.items,
       loading: state.loading,
+      undo: state.undo,
       addItem,
       updateItem,
       deleteItem,
+      undoDelete,
+      clearUndo,
       getItemById,
-      stepItem,
+      replaceAllItems,
     }),
     [
       state.items,
       state.loading,
+      state.undo,
       addItem,
       updateItem,
       deleteItem,
+      undoDelete,
+      clearUndo,
       getItemById,
-      stepItem,
+      replaceAllItems,
     ]
   );
 
   if (state.loading) {
     return (
       <View
-        style={[
-          styles.loadingContainer,
-          { backgroundColor: colors.background },
-        ]}
+        style={[styles.loadingContainer, { backgroundColor: colors.background }]}
       >
         <ActivityIndicator size="large" color={colors.accent} />
       </View>
