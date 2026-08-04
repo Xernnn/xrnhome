@@ -28,8 +28,6 @@ export const DARK_COLORS = {
   tabBar: "#1A1A1A",
 };
 
-export const COLORS = LIGHT_COLORS;
-
 export const SHADOW = {
   shadowColor: "#000",
   shadowOffset: { width: 0, height: 2 },
@@ -64,12 +62,8 @@ export const CATEGORIES = [
   { label: "Grains & Pasta", icon: "grain", color: "#A1887F" },
   { label: "Snacks", icon: "cookie", color: "#FFCA28" },
   { label: "Food Cupboard", icon: "cupboard", color: "#8D6E63" },
-  { label: "Dessert", icon: "cupcake", color: "#F48FB1" },
-  { label: "Non Food Items", icon: "spray-bottle", color: "#90A4AE" },
   { label: "Other", icon: "dots-horizontal", color: "#BDBDBD" },
 ];
-
-export const STORAGE_LOCATIONS = ["Pantry", "Fridge", "Freezer", "Counter"];
 
 export const QUANTITY_UNITS = [
   "pcs",
@@ -83,22 +77,12 @@ export const QUANTITY_UNITS = [
   "bunches",
 ];
 
-export const STORAGE_LOCATION_META = {
-  Pantry: { icon: "cupboard", color: "#A1887F" },
-  Fridge: { icon: "fridge", color: "#29B6F6" },
-  Freezer: { icon: "snowflake", color: "#80DEEA" },
-  Counter: { icon: "countertop", color: "#FF9800" },
-};
-
 export const MAX_HISTORY_ENTRIES = 20;
 export const OPENED_STEP = 10;
 export const ALMOST_OUT_PERCENT = 20;
 
 export const getCategoryMeta = (label) =>
   CATEGORIES.find((c) => c.label === label) || CATEGORIES[CATEGORIES.length - 1];
-
-export const getStorageMeta = (label) =>
-  STORAGE_LOCATION_META[label] || { icon: "help-circle-outline", color: "#BDBDBD" };
 
 export const categoryExists = (label) =>
   CATEGORIES.some((c) => c.label === label);
@@ -113,14 +97,28 @@ export const isAlmostOut = (item) => {
   if (!item) {
     return false;
   }
-  if (item.quantity > 0) {
-    return false;
-  }
-  if (!isTrackingOpened(item)) {
+  if (item.quantity <= 0) {
     return true;
   }
-  return item.openedPercent <= ALMOST_OUT_PERCENT;
+  // On the last unit, a nearly-empty open one still counts as running out.
+  if (item.quantity === 1 && isTrackingOpened(item)) {
+    return item.openedPercent <= ALMOST_OUT_PERCENT;
+  }
+  return false;
 };
+
+// Items with stock show in My Kitchen.
+export const isInKitchen = (item) => !!item && item.quantity > 0;
+
+// Ran out and not on the shopping list — shown under Previously Had.
+// Every out-of-stock item lands either here or in Buy Now, so nothing is
+// left stranded with no screen to reach it from.
+export const isPreviouslyHad = (item) =>
+  !!item && item.quantity <= 0 && !item.recurring;
+
+// Key used to decide whether two entries describe the same item.
+export const normalizeName = (name) =>
+  typeof name === "string" ? name.trim().toLowerCase() : "";
 
 export const hexToRgba = (hex, alpha) => {
   if (!hex || typeof hex !== "string") {

@@ -22,7 +22,6 @@ import {
   RADIUS,
   SHADOW,
   getCategoryMeta,
-  getStorageMeta,
   hexToRgba,
   isTrackingOpened,
 } from "../utils/constants";
@@ -79,34 +78,17 @@ export default function ItemDetailScreen({ navigation, route }) {
   }
 
   const meta = getCategoryMeta(item.category);
-  const storageMeta = getStorageMeta(item.storageLocation);
   const tracking = isTrackingOpened(item);
+  // A full open unit reads the same as a sealed one, so it earns no summary card.
+  const partiallyOpen = tracking && item.openedPercent < 100;
 
-  const handleUse = () => {
-    if (item.quantity <= 0) {
-      Alert.alert("Out of stock", "There are no sealed units left to use.");
-      return;
-    }
-    const performUse = () => {
-      const before = item.quantity;
-      const after = before - 1;
-      updateItem(
-        item.id,
-        { quantity: after },
-        {
-          action: `Used 1 ${item.unit}`,
-          quantityBefore: before,
-          quantityAfter: after,
-        }
-      );
-    };
-    if (item.quantity - 1 <= 0) {
-      Alert.alert("Use last unit?", "This will bring the sealed units to 0.", [
-        { text: "Cancel", style: "cancel" },
-        { text: "Use", onPress: performUse },
-      ]);
-    } else {
-      performUse();
+  const handleStep = (dir) => {
+    const result = computeStep(item, dir);
+    if (result.changes) {
+      updateItem(item.id, result.changes, result.historyEntry);
+      if (result.willEmpty) {
+        navigation.goBack();
+      }
     }
   };
 
@@ -134,34 +116,11 @@ export default function ItemDetailScreen({ navigation, route }) {
     setRestockOpen(false);
   };
 
-  const handleOpenedStep = (dir) => {
-    const result = computeStep(item, dir);
-    if (result.willRemove) {
-      Alert.alert(
-        "All gone",
-        `"${item.name}" is finished. Remove it from your kitchen?`,
-        [
-          { text: "Keep", style: "cancel" },
-          {
-            text: "Remove",
-            style: "destructive",
-            onPress: () => {
-              deleteItem(item.id);
-              navigation.goBack();
-            },
-          },
-        ]
-      );
-    } else if (result.changes) {
-      updateItem(item.id, result.changes, result.historyEntry);
-    }
-  };
-
   const toggleRecurring = (value) => {
     updateItem(
       item.id,
       { recurring: value, neverRecommend: value ? false : item.neverRecommend },
-      { action: value ? "Marked for re-buy" : "Removed re-buy flag" }
+      { action: value ? "Added to shopping list" : "Removed from shopping list" }
     );
   };
 
@@ -255,39 +214,30 @@ export default function ItemDetailScreen({ navigation, route }) {
 
           <View style={styles.badgeRow}>
             <CategoryBadge category={item.category} />
-            <View
-              style={[
-                styles.locationBadge,
-                { backgroundColor: hexToRgba(storageMeta.color, 0.15) },
-              ]}
-            >
-              <MaterialCommunityIcons
-                name={storageMeta.icon}
-                size={14}
-                color={storageMeta.color}
-                style={styles.locationBadgeIcon}
-              />
-              <Text
-                style={[styles.locationBadgeText, { color: storageMeta.color }]}
-              >
-                {item.storageLocation}
-              </Text>
-            </View>
           </View>
 
-          <View style={styles.infoCardsRow}>
-            <View style={styles.infoCard}>
-              <Text style={styles.infoCardLabel}>Sealed Units</Text>
+          <View
+            style={[
+              styles.infoCardsRow,
+              !partiallyOpen && styles.infoCardsRowSingle,
+            ]}
+          >
+            <View
+              style={[styles.infoCard, partiallyOpen && styles.infoCardWithGap]}
+            >
+              <Text style={styles.infoCardLabel}>Units</Text>
               <Text style={styles.infoCardValue}>
                 {item.quantity} {item.unit}
               </Text>
             </View>
-            <View style={styles.infoCard}>
-              <Text style={styles.infoCardLabel}>Opened Unit</Text>
-              <Text style={styles.infoCardValue}>
-                {tracking ? `${item.openedPercent}%` : "Not opened"}
-              </Text>
-            </View>
+            {partiallyOpen ? (
+              <View style={styles.infoCard}>
+                <Text style={styles.infoCardLabel}>Open unit</Text>
+                <Text style={styles.infoCardValue}>
+                  {item.openedPercent}%
+                </Text>
+              </View>
+            ) : null}
           </View>
 
           <View style={styles.recurringRow}>
@@ -297,7 +247,7 @@ export default function ItemDetailScreen({ navigation, route }) {
                 size={18}
                 color={colors.accent}
               />
-              <Text style={styles.recurringLabel}>Re-buy when empty</Text>
+              <Text style={styles.recurringLabel}>Shopping list</Text>
             </View>
             <Switch
               value={!!item.recurring}
@@ -315,19 +265,55 @@ export default function ItemDetailScreen({ navigation, route }) {
           ) : null}
 
           <Text style={styles.sectionTitle}>Quick Update</Text>
+
+          {tracking ? (
+            <View style={styles.openedControlCard}>
+              <Text style={styles.openedControlLabel}>Open unit</Text>
+              <View style={styles.openedControlRow}>
+                <TouchableOpacity
+                  activeOpacity={0.7}
+                  style={styles.openedStepButton}
+                  onPress={() => handleStep(-1)}
+                >
+                  <MaterialCommunityIcons
+                    name="minus"
+                    size={22}
+                    color={colors.accent}
+                  />
+                </TouchableOpacity>
+                <Text style={styles.openedPercentValue}>
+                  {item.openedPercent}%
+                </Text>
+                <TouchableOpacity
+                  activeOpacity={0.7}
+                  style={styles.openedStepButton}
+                  onPress={() => handleStep(1)}
+                >
+                  <MaterialCommunityIcons
+                    name="plus"
+                    size={22}
+                    color={colors.accent}
+                  />
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : null}
+
           <View style={styles.quickRow}>
-            <TouchableOpacity
-              activeOpacity={0.7}
-              style={[styles.quickButton, styles.useButton]}
-              onPress={handleUse}
-            >
-              <MaterialCommunityIcons
-                name="minus-circle-outline"
-                size={20}
-                color={colors.white}
-              />
-              <Text style={styles.quickButtonText}>Use 1</Text>
-            </TouchableOpacity>
+            {tracking ? null : (
+              <TouchableOpacity
+                activeOpacity={0.7}
+                style={[styles.quickButton, styles.useButton]}
+                onPress={() => handleStep(-1)}
+              >
+                <MaterialCommunityIcons
+                  name="minus-circle-outline"
+                  size={20}
+                  color={colors.white}
+                />
+                <Text style={styles.quickButtonText}>Use 1</Text>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity
               activeOpacity={0.7}
               style={[styles.quickButton, styles.restockButton]}
@@ -350,9 +336,8 @@ export default function ItemDetailScreen({ navigation, route }) {
                 style={styles.inlineInput}
                 value={restockValue}
                 onChangeText={setRestockValue}
-                placeholder={`Add units (${item.unit})`}
-                placeholderTextColor={colors.textSecondary}
                 keyboardType="numeric"
+                autoFocus
               />
               <TouchableOpacity
                 activeOpacity={0.7}
@@ -361,45 +346,6 @@ export default function ItemDetailScreen({ navigation, route }) {
               >
                 <Text style={styles.confirmButtonText}>Add</Text>
               </TouchableOpacity>
-            </View>
-          ) : null}
-
-          {tracking ? (
-            <View style={styles.openedControlCard}>
-              <Text style={styles.openedControlLabel}>
-                Opened unit remaining
-              </Text>
-              <View style={styles.openedControlRow}>
-                <TouchableOpacity
-                  activeOpacity={0.7}
-                  style={styles.openedStepButton}
-                  onPress={() => handleOpenedStep(-1)}
-                >
-                  <MaterialCommunityIcons
-                    name="minus"
-                    size={22}
-                    color={colors.accent}
-                  />
-                </TouchableOpacity>
-                <Text style={styles.openedPercentValue}>
-                  {item.openedPercent}%
-                </Text>
-                <TouchableOpacity
-                  activeOpacity={0.7}
-                  style={styles.openedStepButton}
-                  onPress={() => handleOpenedStep(1)}
-                >
-                  <MaterialCommunityIcons
-                    name="plus"
-                    size={22}
-                    color={colors.accent}
-                  />
-                </TouchableOpacity>
-              </View>
-              <Text style={styles.openedControlHint}>
-                Drops by 10% each tap. At 0% the next sealed unit opens
-                automatically.
-              </Text>
             </View>
           ) : null}
 
@@ -467,7 +413,7 @@ const createStyles = (colors) =>
     },
     heroWrap: {
       width: "100%",
-      height: 240,
+      aspectRatio: 1,
       backgroundColor: colors.surfaceAlt,
     },
     hero: {
@@ -496,24 +442,12 @@ const createStyles = (colors) =>
       flexWrap: "wrap",
       marginBottom: SPACING.screen,
     },
-    locationBadge: {
-      flexDirection: "row",
-      alignItems: "center",
-      paddingVertical: 5,
-      paddingHorizontal: 10,
-      borderRadius: RADIUS.pill,
-      marginLeft: SPACING.inner,
-    },
-    locationBadgeIcon: {
-      marginRight: 4,
-    },
-    locationBadgeText: {
-      fontSize: 13,
-      fontWeight: "600",
-    },
     infoCardsRow: {
       flexDirection: "row",
       marginBottom: SPACING.card,
+    },
+    infoCardsRowSingle: {
+      flexDirection: "column",
     },
     infoCard: {
       flex: 1,
@@ -521,6 +455,9 @@ const createStyles = (colors) =>
       borderRadius: RADIUS.card,
       padding: SPACING.card,
       ...SHADOW,
+    },
+    infoCardWithGap: {
+      marginRight: SPACING.card,
     },
     infoCardLabel: {
       fontSize: 13,
@@ -660,13 +597,6 @@ const createStyles = (colors) =>
       marginHorizontal: SPACING.screen,
       minWidth: 80,
       textAlign: "center",
-    },
-    openedControlHint: {
-      fontSize: 12,
-      color: colors.textSecondary,
-      marginTop: SPACING.card,
-      textAlign: "center",
-      lineHeight: 16,
     },
     emptyHistory: {
       fontSize: 14,
