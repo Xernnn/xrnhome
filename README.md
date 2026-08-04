@@ -36,7 +36,7 @@ leaves your phone.
 ## Getting started
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/Xernnn/kitchenpal
 cd kitchenpal
 npm install
 npm start
