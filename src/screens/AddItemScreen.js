@@ -25,9 +25,9 @@ import {
   RADIUS,
   SHADOW,
   CATEGORIES,
-  STORAGE_LOCATIONS,
   QUANTITY_UNITS,
   OPENED_STEP,
+  getCategoryMeta,
   hexToRgba,
 } from "../utils/constants";
 
@@ -39,9 +39,10 @@ export default function AddItemScreen({ navigation }) {
   const [imageUri, setImageUri] = useState(null);
   const [name, setName] = useState("");
   const [category, setCategory] = useState(null);
-  const [storageLocation, setStorageLocation] = useState(null);
+  const [categoryOpen, setCategoryOpen] = useState(false);
   const [quantity, setQuantity] = useState(1);
   const [unit, setUnit] = useState(QUANTITY_UNITS[0]);
+  const [unitOpen, setUnitOpen] = useState(false);
   const [openedEnabled, setOpenedEnabled] = useState(false);
   const [openedPercent, setOpenedPercent] = useState(100);
   const [recurring, setRecurring] = useState(false);
@@ -62,7 +63,7 @@ export default function AddItemScreen({ navigation }) {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ["images"],
         allowsEditing: true,
-        aspect: [4, 3],
+        aspect: [1, 1],
         quality: 0.7,
       });
       if (!result.canceled && result.assets && result.assets.length > 0) {
@@ -86,7 +87,7 @@ export default function AddItemScreen({ navigation }) {
       }
       const result = await ImagePicker.launchCameraAsync({
         allowsEditing: true,
-        aspect: [4, 3],
+        aspect: [1, 1],
         quality: 0.7,
       });
       if (!result.canceled && result.assets && result.assets.length > 0) {
@@ -131,13 +132,6 @@ export default function AddItemScreen({ navigation }) {
       Alert.alert("Missing category", "Please select a category.");
       return false;
     }
-    if (!storageLocation) {
-      Alert.alert(
-        "Missing storage location",
-        "Please select where this item is stored."
-      );
-      return false;
-    }
     if (!Number.isFinite(quantity) || quantity < 0) {
       Alert.alert("Invalid quantity", "Quantity must be a positive number.");
       return false;
@@ -152,7 +146,6 @@ export default function AddItemScreen({ navigation }) {
     addItem({
       name: name.trim(),
       category,
-      storageLocation,
       imageUri,
       quantity,
       unit,
@@ -162,6 +155,8 @@ export default function AddItemScreen({ navigation }) {
     });
     navigation.goBack();
   };
+
+  const selectedMeta = category ? getCategoryMeta(category) : null;
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
@@ -205,7 +200,6 @@ export default function AddItemScreen({ navigation }) {
                   size={42}
                   color={colors.textSecondary}
                 />
-                <Text style={styles.imagePlaceholderText}>Add a photo</Text>
               </View>
             )}
             {imageUri ? (
@@ -224,116 +218,124 @@ export default function AddItemScreen({ navigation }) {
             style={[styles.input, nameFocused && styles.inputFocused]}
             value={name}
             onChangeText={setName}
-            placeholder="e.g. Olive Oil"
-            placeholderTextColor={colors.textSecondary}
             onFocus={() => setNameFocused(true)}
             onBlur={() => setNameFocused(false)}
           />
 
           <Text style={styles.label}>Category</Text>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.chipsRow}
+          <TouchableOpacity
+            activeOpacity={0.7}
+            style={styles.selector}
+            onPress={() => setCategoryOpen((prev) => !prev)}
           >
-            {CATEGORIES.map((cat) => {
-              const active = category === cat.label;
-              return (
-                <TouchableOpacity
-                  key={cat.label}
-                  activeOpacity={0.7}
-                  onPress={() => setCategory(cat.label)}
-                  style={[
-                    styles.categoryChip,
-                    {
-                      backgroundColor: active
-                        ? cat.color
-                        : hexToRgba(cat.color, 0.12),
-                      borderColor: cat.color,
-                      borderWidth: active ? 0 : 1,
-                    },
-                  ]}
-                >
-                  <MaterialCommunityIcons
-                    name={cat.icon}
-                    size={16}
-                    color={active ? colors.white : cat.color}
-                  />
-                  <Text
+            {selectedMeta ? (
+              <>
+                <MaterialCommunityIcons
+                  name={selectedMeta.icon}
+                  size={20}
+                  color={selectedMeta.color}
+                />
+                <Text style={styles.selectorValue}>{category}</Text>
+              </>
+            ) : (
+              <Text style={styles.selectorEmpty}>Choose a category</Text>
+            )}
+            <MaterialCommunityIcons
+              name={categoryOpen ? "chevron-up" : "chevron-down"}
+              size={22}
+              color={colors.textSecondary}
+            />
+          </TouchableOpacity>
+
+          {categoryOpen ? (
+            <View style={styles.grid}>
+              {CATEGORIES.map((cat) => {
+                const active = category === cat.label;
+                return (
+                  <TouchableOpacity
+                    key={cat.label}
+                    activeOpacity={0.7}
+                    onPress={() => {
+                      setCategory(cat.label);
+                      setCategoryOpen(false);
+                    }}
                     style={[
-                      styles.categoryChipText,
-                      { color: active ? colors.white : cat.color },
+                      styles.categoryChip,
+                      {
+                        backgroundColor: active
+                          ? cat.color
+                          : hexToRgba(cat.color, 0.12),
+                        borderColor: cat.color,
+                        borderWidth: active ? 0 : 1,
+                      },
                     ]}
                   >
-                    {cat.label}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-
-          <Text style={styles.label}>Storage Location</Text>
-          <View style={styles.segmented}>
-            {STORAGE_LOCATIONS.map((loc) => {
-              const active = storageLocation === loc;
-              return (
-                <TouchableOpacity
-                  key={loc}
-                  activeOpacity={0.7}
-                  onPress={() => setStorageLocation(loc)}
-                  style={[styles.segment, active && styles.segmentActive]}
-                >
-                  <Text
-                    style={[
-                      styles.segmentText,
-                      active && styles.segmentTextActive,
-                    ]}
-                  >
-                    {loc}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-
-          <Text style={styles.label}>Sealed Units</Text>
-          <View style={styles.quantityRow}>
-            <QuantityControl value={quantity} onChange={setQuantity} min={0} />
-          </View>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.chipsRow}
-          >
-            {QUANTITY_UNITS.map((u) => {
-              const active = unit === u;
-              return (
-                <TouchableOpacity
-                  key={u}
-                  activeOpacity={0.7}
-                  onPress={() => setUnit(u)}
-                  style={[styles.unitChip, active && styles.unitChipActive]}
-                >
-                  <Text
-                    style={[
-                      styles.unitChipText,
-                      active && styles.unitChipTextActive,
-                    ]}
-                  >
-                    {u}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-
-          <View style={styles.toggleHeader}>
-            <View style={styles.toggleTextWrap}>
-              <Text style={styles.sectionTitle}>Track opened unit (%)</Text>
-              <Text style={styles.toggleHint}>
-                For a unit you've already opened, e.g. a can that's 40% left.
-              </Text>
+                    <MaterialCommunityIcons
+                      name={cat.icon}
+                      size={16}
+                      color={active ? colors.white : cat.color}
+                    />
+                    <Text
+                      style={[
+                        styles.categoryChipText,
+                        { color: active ? colors.white : cat.color },
+                      ]}
+                    >
+                      {cat.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
+          ) : null}
+
+          <Text style={styles.label}>Units</Text>
+          <View style={styles.unitsRow}>
+            <QuantityControl value={quantity} onChange={setQuantity} min={0} />
+            <TouchableOpacity
+              activeOpacity={0.7}
+              style={styles.unitToggle}
+              onPress={() => setUnitOpen((prev) => !prev)}
+            >
+              <Text style={styles.unitToggleText}>{unit}</Text>
+              <MaterialCommunityIcons
+                name={unitOpen ? "chevron-up" : "chevron-down"}
+                size={18}
+                color={colors.accent}
+              />
+            </TouchableOpacity>
+          </View>
+
+          {unitOpen ? (
+            <View style={styles.grid}>
+              {QUANTITY_UNITS.map((u) => {
+                const active = unit === u;
+                return (
+                  <TouchableOpacity
+                    key={u}
+                    activeOpacity={0.7}
+                    onPress={() => {
+                      setUnit(u);
+                      setUnitOpen(false);
+                    }}
+                    style={[styles.unitChip, active && styles.unitChipActive]}
+                  >
+                    <Text
+                      style={[
+                        styles.unitChipText,
+                        active && styles.unitChipTextActive,
+                      ]}
+                    >
+                      {u}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          ) : null}
+
+          <View style={styles.toggleRow}>
+            <Text style={styles.sectionTitle}>Partially used</Text>
             <Switch
               value={openedEnabled}
               onValueChange={setOpenedEnabled}
@@ -344,27 +346,19 @@ export default function AddItemScreen({ navigation }) {
 
           {openedEnabled ? (
             <View style={styles.openedSection}>
-              <Text style={styles.label}>Remaining in opened unit</Text>
-              <View style={styles.percentRow}>
-                <QuantityControl
-                  value={openedPercent}
-                  onChange={setOpenedPercent}
-                  min={0}
-                  max={100}
-                  step={OPENED_STEP}
-                  unitLabel="%"
-                />
-              </View>
+              <QuantityControl
+                value={openedPercent}
+                onChange={setOpenedPercent}
+                min={0}
+                max={100}
+                step={OPENED_STEP}
+                unitLabel="%"
+              />
             </View>
           ) : null}
 
-          <View style={styles.toggleHeader}>
-            <View style={styles.toggleTextWrap}>
-              <Text style={styles.sectionTitle}>Re-buy when empty</Text>
-              <Text style={styles.toggleHint}>
-                Add to your Shopping list automatically when it runs low.
-              </Text>
-            </View>
+          <View style={styles.toggleRow}>
+            <Text style={styles.sectionTitle}>Shopping list</Text>
             <Switch
               value={recurring}
               onValueChange={setRecurring}
@@ -382,8 +376,6 @@ export default function AddItemScreen({ navigation }) {
             ]}
             value={note}
             onChangeText={setNote}
-            placeholder="Any notes about this item..."
-            placeholderTextColor={colors.textSecondary}
             multiline
             numberOfLines={4}
             textAlignVertical="top"
@@ -448,7 +440,7 @@ const createStyles = (colors) =>
     },
     imageArea: {
       width: "100%",
-      aspectRatio: 16 / 9,
+      aspectRatio: 1,
       borderRadius: RADIUS.card,
       backgroundColor: colors.surfaceAlt,
       overflow: "hidden",
@@ -463,11 +455,6 @@ const createStyles = (colors) =>
       flex: 1,
       alignItems: "center",
       justifyContent: "center",
-    },
-    imagePlaceholderText: {
-      fontSize: 14,
-      color: colors.textSecondary,
-      marginTop: SPACING.inner,
     },
     imageEditBadge: {
       position: "absolute",
@@ -504,9 +491,32 @@ const createStyles = (colors) =>
       minHeight: 90,
       paddingTop: 12,
     },
-    chipsRow: {
-      paddingVertical: 4,
-      paddingRight: SPACING.inner,
+    selector: {
+      flexDirection: "row",
+      alignItems: "center",
+      backgroundColor: colors.surface,
+      borderRadius: RADIUS.button,
+      borderWidth: 1,
+      borderColor: colors.border,
+      paddingHorizontal: SPACING.card,
+      paddingVertical: 13,
+    },
+    selectorValue: {
+      flex: 1,
+      fontSize: 16,
+      fontWeight: "600",
+      color: colors.textPrimary,
+      marginLeft: SPACING.inner,
+    },
+    selectorEmpty: {
+      flex: 1,
+      fontSize: 16,
+      color: colors.textSecondary,
+    },
+    grid: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      marginTop: SPACING.inner,
     },
     categoryChip: {
       flexDirection: "row",
@@ -515,40 +525,31 @@ const createStyles = (colors) =>
       paddingHorizontal: 14,
       borderRadius: RADIUS.pill,
       marginRight: SPACING.inner,
+      marginBottom: SPACING.inner,
     },
     categoryChipText: {
       fontSize: 13,
       fontWeight: "600",
       marginLeft: 6,
     },
-    segmented: {
-      flexDirection: "row",
-      backgroundColor: colors.surfaceAlt,
-      borderRadius: RADIUS.button,
-      padding: 4,
-    },
-    segment: {
-      flex: 1,
-      paddingVertical: 10,
-      borderRadius: RADIUS.button - 2,
-      alignItems: "center",
-      justifyContent: "center",
-    },
-    segmentActive: {
-      backgroundColor: colors.accent,
-    },
-    segmentText: {
-      fontSize: 13,
-      fontWeight: "600",
-      color: colors.textSecondary,
-    },
-    segmentTextActive: {
-      color: colors.white,
-    },
-    quantityRow: {
+    unitsRow: {
       flexDirection: "row",
       alignItems: "center",
-      marginBottom: SPACING.inner,
+      justifyContent: "space-between",
+    },
+    unitToggle: {
+      flexDirection: "row",
+      alignItems: "center",
+      backgroundColor: colors.accentLight,
+      borderRadius: RADIUS.pill,
+      paddingVertical: 9,
+      paddingHorizontal: 14,
+    },
+    unitToggleText: {
+      fontSize: 15,
+      fontWeight: "700",
+      color: colors.accent,
+      marginRight: 4,
     },
     unitChip: {
       paddingVertical: 8,
@@ -556,6 +557,7 @@ const createStyles = (colors) =>
       borderRadius: RADIUS.pill,
       backgroundColor: colors.surfaceAlt,
       marginRight: SPACING.inner,
+      marginBottom: SPACING.inner,
     },
     unitChipActive: {
       backgroundColor: colors.accent,
@@ -568,37 +570,24 @@ const createStyles = (colors) =>
     unitChipTextActive: {
       color: colors.white,
     },
-    toggleHeader: {
+    toggleRow: {
       flexDirection: "row",
       alignItems: "center",
       justifyContent: "space-between",
       marginTop: SPACING.screen,
-    },
-    toggleTextWrap: {
-      flex: 1,
-      paddingRight: SPACING.card,
     },
     sectionTitle: {
       fontSize: 17,
       fontWeight: "700",
       color: colors.textPrimary,
     },
-    toggleHint: {
-      fontSize: 12,
-      color: colors.textSecondary,
-      marginTop: 2,
-      lineHeight: 16,
-    },
     openedSection: {
+      flexDirection: "row",
       backgroundColor: colors.surface,
       borderRadius: RADIUS.card,
       padding: SPACING.card,
-      marginTop: SPACING.inner,
+      marginTop: SPACING.card,
       ...SHADOW,
-    },
-    percentRow: {
-      flexDirection: "row",
-      alignItems: "center",
     },
     footer: {
       padding: SPACING.screen,

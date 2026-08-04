@@ -7,13 +7,20 @@ import React, {
   useCallback,
 } from "react";
 import { View, ActivityIndicator, StyleSheet } from "react-native";
-import { loadItems, saveItems } from "../utils/storage";
+import {
+  loadItems,
+  saveItems,
+  loadSchemaVersion,
+  saveSchemaVersion,
+  CURRENT_SCHEMA_VERSION,
+} from "../utils/storage";
 import {
   MAX_HISTORY_ENTRIES,
   OPENED_STEP,
   QUANTITY_UNITS,
   categoryExists,
   isTrackingOpened,
+  normalizeName,
 } from "../utils/constants";
 import { useTheme } from "./ThemeContext";
 
@@ -31,29 +38,6 @@ const ACTIONS = {
   DELETE_ITEM: "DELETE_ITEM",
 };
 
-function reducer(state, action) {
-  switch (action.type) {
-    case ACTIONS.SET_ITEMS:
-      return { ...state, items: action.payload, loading: false };
-    case ACTIONS.ADD_ITEM:
-      return { ...state, items: [action.payload, ...state.items] };
-    case ACTIONS.UPDATE_ITEM:
-      return {
-        ...state,
-        items: state.items.map((item) =>
-          item.id === action.payload.id ? action.payload : item
-        ),
-      };
-    case ACTIONS.DELETE_ITEM:
-      return {
-        ...state,
-        items: state.items.filter((item) => item.id !== action.payload),
-      };
-    default:
-      return state;
-  }
-}
-
 const generateId = () =>
   `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 
@@ -69,8 +53,12 @@ const capHistory = (history) => {
 
 const clampPercent = (value) => Math.max(0, Math.min(100, value));
 
-// Normalizes any stored item (including legacy shapes) into the current model.
-const normalizeItem = (raw) => {
+/**
+ * Normalizes any stored item (including legacy shapes) into the current model.
+ * When migrateToV2 is set, quantity is rewritten from "sealed only" to a total
+ * that includes the opened unit.
+ */
+const normalizeItem = (raw, migrateToV2) => {
   if (!raw || typeof raw !== "object") {
     return null;
   }
@@ -87,109 +75,251 @@ const normalizeItem = (raw) => {
     openedPercent = 100;
   }
 
+  let quantity =
+    typeof raw.quantity === "number" && !Number.isNaN(raw.quantity)
+      ? raw.quantity
+      : 0;
+  if (migrateToV2 && openedPercent !== null) {
+    quantity += 1;
+  }
+
+  const now = new Date().toISOString();
+
   return {
     id: raw.id || generateId(),
     name: typeof raw.name === "string" ? raw.name : "Untitled item",
     category: categoryExists(raw.category) ? raw.category : "Other",
-    storageLocation: raw.storageLocation || "Pantry",
     imageUri: raw.imageUri ?? null,
-    quantity:
-      typeof raw.quantity === "number" && !Number.isNaN(raw.quantity)
-        ? raw.quantity
-        : 0,
+    quantity: Math.max(0, quantity),
     unit: typeof raw.unit === "string" && raw.unit ? raw.unit : QUANTITY_UNITS[0],
     openedPercent,
     recurring: !!raw.recurring,
     neverRecommend: !!raw.neverRecommend,
     note: typeof raw.note === "string" ? raw.note : "",
-    createdAt: raw.createdAt || new Date().toISOString(),
-    updatedAt: raw.updatedAt || new Date().toISOString(),
+    createdAt: raw.createdAt || now,
+    updatedAt: raw.updatedAt || now,
     history: Array.isArray(raw.history) ? raw.history : [],
   };
 };
 
+const byDate = (a, b) => String(a.date).localeCompare(String(b.date));
+
+// Folds entries that describe the same item into a single record.
+const mergeDuplicates = (items) => {
+  const byName = new Map();
+
+  items.forEach((item) => {
+    const key = normalizeName(item.name);
+    const seen = byName.get(key);
+    if (!seen) {
+      byName.set(key, item);
+      return;
+    }
+
+    const [keep, drop] =
+      String(seen.createdAt) <= String(item.createdAt)
+        ? [seen, item]
+        : [item, seen];
+
+    byName.set(key, {
+      ...keep,
+      quantity: (keep.quantity || 0) + (drop.quantity || 0),
+      openedPercent:
+        keep.openedPercent !== null ? keep.openedPercent : drop.openedPercent,
+      imageUri: keep.imageUri || drop.imageUri,
+      note: keep.note || drop.note,
+      recurring: keep.recurring || drop.recurring,
+      neverRecommend: keep.neverRecommend && drop.neverRecommend,
+      history: capHistory(
+        [...(keep.history || []), ...(drop.history || [])].sort(byDate)
+      ),
+    });
+  });
+
+  return Array.from(byName.values());
+};
+
 /**
- * Pure helper that computes the result of a +/- step on an item card.
+ * Pure helper that computes the result of a +/- step on an item.
  * dir > 0 increases, dir < 0 decreases.
- * Returns { changes, historyEntry, willRemove }.
+ * `willEmpty` reports that the change leaves the item at zero units; the caller
+ * decides whether that means a prompt or a quiet move to the shopping list.
  */
 export function computeStep(item, dir) {
+  const noop = { changes: null, historyEntry: null, willEmpty: false };
   if (!item) {
-    return { changes: null, historyEntry: null, willRemove: false };
+    return noop;
   }
   const tracking = isTrackingOpened(item);
 
-  if (tracking) {
-    if (dir > 0) {
-      const next = clampPercent(item.openedPercent + OPENED_STEP);
-      if (next === item.openedPercent) {
-        return { changes: null, historyEntry: null, willRemove: false };
-      }
-      return {
-        changes: { openedPercent: next },
-        historyEntry: {
-          action: `Topped up opened unit to ${next}%`,
-          quantityBefore: item.quantity,
-          quantityAfter: item.quantity,
-        },
-        willRemove: false,
-      };
-    }
-
-    const next = item.openedPercent - OPENED_STEP;
-    if (next > 0) {
-      return {
-        changes: { openedPercent: next },
-        historyEntry: {
-          action: `Used 10% (now ${next}% left)`,
-          quantityBefore: item.quantity,
-          quantityAfter: item.quantity,
-        },
-        willRemove: false,
-      };
-    }
-    if (item.quantity >= 1) {
-      const q = item.quantity - 1;
-      return {
-        changes: { quantity: q, openedPercent: 100 },
-        historyEntry: {
-          action: `Finished a unit, opened next (${q} sealed left)`,
-          quantityBefore: item.quantity,
-          quantityAfter: q,
-        },
-        willRemove: false,
-      };
-    }
-    return { changes: null, historyEntry: null, willRemove: true };
-  }
-
-  // Whole-unit mode (no opened tracking).
   if (dir > 0) {
+    if (tracking && item.openedPercent < 100) {
+      const next = clampPercent(item.openedPercent + OPENED_STEP);
+      return {
+        changes: { openedPercent: next },
+        historyEntry: {
+          action: `Topped the open unit up to ${next}%`,
+          quantityBefore: item.quantity,
+          quantityAfter: item.quantity,
+        },
+        willEmpty: false,
+      };
+    }
+
     const q = item.quantity + 1;
     return {
       changes: { quantity: q },
       historyEntry: {
-        action: `Restocked 1 ${item.unit} (${q} total)`,
+        action: `Added 1 ${item.unit} (${q} total)`,
         quantityBefore: item.quantity,
         quantityAfter: q,
       },
-      willRemove: false,
+      willEmpty: false,
     };
   }
 
-  const q = item.quantity - 1;
-  if (q >= 1) {
+  if (tracking) {
+    const nextPercent = item.openedPercent - OPENED_STEP;
+    if (nextPercent > 0) {
+      return {
+        changes: { openedPercent: nextPercent },
+        historyEntry: {
+          action: `Used 10% (${nextPercent}% left)`,
+          quantityBefore: item.quantity,
+          quantityAfter: item.quantity,
+        },
+        willEmpty: false,
+      };
+    }
+
+    // The open unit is spent, so it leaves the count.
+    const q = Math.max(0, item.quantity - 1);
+    if (q >= 1) {
+      return {
+        changes: { quantity: q, openedPercent: 100 },
+        historyEntry: {
+          action: `Finished a unit, opened the next (${q} left)`,
+          quantityBefore: item.quantity,
+          quantityAfter: q,
+        },
+        willEmpty: false,
+      };
+    }
     return {
-      changes: { quantity: q },
+      changes: { quantity: 0, openedPercent: null },
       historyEntry: {
-        action: `Used 1 ${item.unit} (${q} left)`,
+        action: "Used the last unit",
         quantityBefore: item.quantity,
-        quantityAfter: q,
+        quantityAfter: 0,
       },
-      willRemove: false,
+      willEmpty: true,
     };
   }
-  return { changes: null, historyEntry: null, willRemove: true };
+
+  if (item.quantity <= 0) {
+    return noop;
+  }
+
+  const q = item.quantity - 1;
+  return {
+    changes: { quantity: q },
+    historyEntry: {
+      action: q === 0 ? "Used the last unit" : `Used 1 ${item.unit} (${q} left)`,
+      quantityBefore: item.quantity,
+      quantityAfter: q,
+    },
+    willEmpty: q === 0,
+  };
+}
+
+function reducer(state, action) {
+  switch (action.type) {
+    case ACTIONS.SET_ITEMS:
+      return { ...state, items: action.payload, loading: false };
+
+    case ACTIONS.ADD_ITEM: {
+      const { candidate, now } = action.payload;
+      const key = normalizeName(candidate.name);
+      const index = state.items.findIndex(
+        (item) => normalizeName(item.name) === key
+      );
+
+      if (index === -1) {
+        return { ...state, items: [candidate, ...state.items] };
+      }
+
+      // Same item already tracked, so top it up instead of adding a second card.
+      const existing = state.items[index];
+      const quantity = (existing.quantity || 0) + (candidate.quantity || 0);
+      const items = [...state.items];
+      items[index] = {
+        ...existing,
+        quantity,
+        imageUri: existing.imageUri || candidate.imageUri,
+        note: candidate.note || existing.note,
+        recurring: candidate.recurring || existing.recurring,
+        neverRecommend: candidate.recurring ? false : existing.neverRecommend,
+        openedPercent:
+          existing.openedPercent !== null
+            ? existing.openedPercent
+            : candidate.openedPercent,
+        updatedAt: now,
+        history: capHistory([
+          ...(existing.history || []),
+          {
+            date: now,
+            action: `Added ${candidate.quantity} ${candidate.unit} (${quantity} total)`,
+            quantityBefore: existing.quantity || 0,
+            quantityAfter: quantity,
+          },
+        ]),
+      };
+      return { ...state, items };
+    }
+
+    case ACTIONS.UPDATE_ITEM: {
+      const { id, changes, historyEntry, now } = action.payload;
+      const index = state.items.findIndex((item) => item.id === id);
+      if (index === -1) {
+        return state;
+      }
+
+      const existing = state.items[index];
+      const history = existing.history ? [...existing.history] : [];
+
+      if (historyEntry) {
+        history.push({
+          date: now,
+          action: historyEntry.action ?? "Updated item",
+          quantityBefore: historyEntry.quantityBefore ?? existing.quantity ?? 0,
+          quantityAfter:
+            historyEntry.quantityAfter ??
+            (changes.quantity != null ? changes.quantity : existing.quantity) ??
+            0,
+        });
+      }
+
+      const items = [...state.items];
+      items[index] = {
+        ...existing,
+        ...changes,
+        id: existing.id,
+        createdAt: existing.createdAt,
+        updatedAt: now,
+        history: capHistory(history),
+      };
+      return { ...state, items };
+    }
+
+    case ACTIONS.DELETE_ITEM:
+      return {
+        ...state,
+        items: state.items.filter((item) => item.id !== action.payload),
+      };
+
+    default:
+      return state;
+  }
 }
 
 export function InventoryProvider({ children }) {
@@ -199,12 +329,23 @@ export function InventoryProvider({ children }) {
   useEffect(() => {
     let mounted = true;
     (async () => {
-      const stored = await loadItems();
+      const [stored, version] = await Promise.all([
+        loadItems(),
+        loadSchemaVersion(),
+      ]);
+      const migrate = version < CURRENT_SCHEMA_VERSION;
       const normalized = Array.isArray(stored)
-        ? stored.map(normalizeItem).filter(Boolean)
+        ? stored.map((raw) => normalizeItem(raw, migrate)).filter(Boolean)
         : [];
+
       if (mounted) {
-        dispatch({ type: ACTIONS.SET_ITEMS, payload: normalized });
+        dispatch({
+          type: ACTIONS.SET_ITEMS,
+          payload: mergeDuplicates(normalized),
+        });
+      }
+      if (migrate) {
+        saveSchemaVersion(CURRENT_SCHEMA_VERSION);
       }
     })();
     return () => {
@@ -212,126 +353,65 @@ export function InventoryProvider({ children }) {
     };
   }, []);
 
-  const persist = useCallback(async (items) => {
-    await saveItems(items);
+  // Persist whatever the reducer produced, so no caller can write a stale list.
+  useEffect(() => {
+    if (state.loading) {
+      return;
+    }
+    saveItems(state.items);
+  }, [state.items, state.loading]);
+
+  const addItem = useCallback((itemData) => {
+    const now = new Date().toISOString();
+    const quantity =
+      typeof itemData.quantity === "number" && !Number.isNaN(itemData.quantity)
+        ? Math.max(0, itemData.quantity)
+        : 0;
+    const openedPercent =
+      itemData.openedPercent === null || itemData.openedPercent === undefined
+        ? null
+        : clampPercent(Number(itemData.openedPercent));
+
+    const candidate = {
+      id: generateId(),
+      name: itemData.name,
+      category: categoryExists(itemData.category) ? itemData.category : "Other",
+      imageUri: itemData.imageUri ?? null,
+      quantity,
+      unit: itemData.unit || QUANTITY_UNITS[0],
+      openedPercent,
+      recurring: !!itemData.recurring,
+      neverRecommend: false,
+      note: itemData.note ?? "",
+      createdAt: now,
+      updatedAt: now,
+      history: [
+        {
+          date: now,
+          action: "Item added",
+          quantityBefore: 0,
+          quantityAfter: quantity,
+        },
+      ],
+    };
+
+    dispatch({ type: ACTIONS.ADD_ITEM, payload: { candidate, now } });
   }, []);
 
-  const addItem = useCallback(
-    (itemData) => {
-      const now = new Date().toISOString();
-      const quantity =
-        typeof itemData.quantity === "number" ? itemData.quantity : 0;
-      const openedPercent =
-        itemData.openedPercent === null ||
-        itemData.openedPercent === undefined
-          ? null
-          : clampPercent(Number(itemData.openedPercent));
+  const updateItem = useCallback((id, changes = {}, historyEntry = null) => {
+    dispatch({
+      type: ACTIONS.UPDATE_ITEM,
+      payload: { id, changes, historyEntry, now: new Date().toISOString() },
+    });
+  }, []);
 
-      const newItem = {
-        id: generateId(),
-        name: itemData.name,
-        category: categoryExists(itemData.category)
-          ? itemData.category
-          : "Other",
-        storageLocation: itemData.storageLocation,
-        imageUri: itemData.imageUri ?? null,
-        quantity,
-        unit: itemData.unit || QUANTITY_UNITS[0],
-        openedPercent,
-        recurring: !!itemData.recurring,
-        neverRecommend: false,
-        note: itemData.note ?? "",
-        createdAt: now,
-        updatedAt: now,
-        history: [
-          {
-            date: now,
-            action: "Item added",
-            quantityBefore: 0,
-            quantityAfter: quantity,
-          },
-        ],
-      };
-
-      dispatch({ type: ACTIONS.ADD_ITEM, payload: newItem });
-      persist([newItem, ...state.items]);
-      return newItem;
-    },
-    [state.items, persist]
-  );
-
-  const updateItem = useCallback(
-    (id, changes = {}, historyEntry = null) => {
-      const existing = state.items.find((item) => item.id === id);
-      if (!existing) {
-        return null;
-      }
-
-      const now = new Date().toISOString();
-      let nextHistory = existing.history ? [...existing.history] : [];
-
-      if (historyEntry) {
-        nextHistory.push({
-          date: now,
-          action: historyEntry.action ?? "Updated item",
-          quantityBefore:
-            historyEntry.quantityBefore ?? existing.quantity ?? 0,
-          quantityAfter:
-            historyEntry.quantityAfter ??
-            (changes.quantity != null ? changes.quantity : existing.quantity) ??
-            0,
-        });
-      }
-
-      nextHistory = capHistory(nextHistory);
-
-      const updated = {
-        ...existing,
-        ...changes,
-        id: existing.id,
-        createdAt: existing.createdAt,
-        updatedAt: now,
-        history: nextHistory,
-      };
-
-      dispatch({ type: ACTIONS.UPDATE_ITEM, payload: updated });
-      persist(state.items.map((item) => (item.id === id ? updated : item)));
-      return updated;
-    },
-    [state.items, persist]
-  );
-
-  const deleteItem = useCallback(
-    (id) => {
-      dispatch({ type: ACTIONS.DELETE_ITEM, payload: id });
-      persist(state.items.filter((item) => item.id !== id));
-    },
-    [state.items, persist]
-  );
+  const deleteItem = useCallback((id) => {
+    dispatch({ type: ACTIONS.DELETE_ITEM, payload: id });
+  }, []);
 
   const getItemById = useCallback(
     (id) => state.items.find((item) => item.id === id) || null,
     [state.items]
-  );
-
-  // Applies a +/- step from a card. Returns { removed, willRemove } so the
-  // caller can decide whether to confirm/remove a fully depleted item.
-  const stepItem = useCallback(
-    (id, dir) => {
-      const existing = state.items.find((item) => item.id === id);
-      if (!existing) {
-        return { willRemove: false };
-      }
-      const result = computeStep(existing, dir);
-      if (result.willRemove) {
-        return { willRemove: true };
-      }
-      if (result.changes) {
-        updateItem(id, result.changes, result.historyEntry);
-      }
-      return { willRemove: false };
-    },
-    [state.items, updateItem]
   );
 
   const value = useMemo(
@@ -342,7 +422,6 @@ export function InventoryProvider({ children }) {
       updateItem,
       deleteItem,
       getItemById,
-      stepItem,
     }),
     [
       state.items,
@@ -351,7 +430,6 @@ export function InventoryProvider({ children }) {
       updateItem,
       deleteItem,
       getItemById,
-      stepItem,
     ]
   );
 

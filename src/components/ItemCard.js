@@ -24,10 +24,11 @@ export default function ItemCard({ item, onPress, onStep }) {
 
   const meta = getCategoryMeta(item.category);
   const hasImage = !!item.imageUri;
-  const tracking = isTrackingOpened(item);
+  // A full open unit reads the same as a sealed one, so show the count instead.
+  const partiallyOpen = isTrackingOpened(item) && item.openedPercent < 100;
 
-  const bigValue = tracking ? `${item.openedPercent}%` : `${item.quantity}`;
-  const controlCaption = tracking ? "opened unit" : item.unit;
+  const bigValue = partiallyOpen ? `${item.openedPercent}%` : `${item.quantity}`;
+  const controlCaption = partiallyOpen ? "open unit" : item.unit;
 
   const handleStep = (dir) => {
     if (onStep) {
@@ -65,7 +66,7 @@ export default function ItemCard({ item, onPress, onStep }) {
           </View>
         ) : null}
 
-        {tracking ? (
+        {partiallyOpen ? (
           <View style={styles.openedBadge}>
             <Text style={styles.openedBadgeText}>{item.openedPercent}%</Text>
           </View>
@@ -78,7 +79,6 @@ export default function ItemCard({ item, onPress, onStep }) {
         </Text>
         <Text style={styles.subtitle} numberOfLines={1}>
           {item.quantity} {item.unit}
-          {tracking ? " sealed" : ""}
         </Text>
       </View>
 

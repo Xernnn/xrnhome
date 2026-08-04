@@ -8,6 +8,7 @@ export default function SearchBar({
   value,
   onChangeText,
   placeholder = "Search items...",
+  autoFocus = false,
 }) {
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
@@ -28,6 +29,7 @@ export default function SearchBar({
         placeholderTextColor={colors.textSecondary}
         returnKeyType="search"
         autoCorrect={false}
+        autoFocus={autoFocus}
       />
       {value && value.length > 0 ? (
         <TouchableOpacity

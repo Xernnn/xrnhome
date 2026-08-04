@@ -22,37 +22,39 @@ import {
   hexToRgba,
   isTrackingOpened,
   isAlmostOut,
+  isPreviouslyHad,
 } from "../utils/constants";
 
 export default function ShoppingScreen({ navigation }) {
-  const { items, updateItem } = useInventory();
+  const { items, updateItem, deleteItem } = useInventory();
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
-  const { buyNow, saved } = useMemo(() => {
+  const { buyNow, saved, previouslyHad } = useMemo(() => {
     const active = items.filter(
       (item) => item.recurring && !item.neverRecommend
     );
     return {
       buyNow: active.filter((item) => isAlmostOut(item)),
       saved: active.filter((item) => !isAlmostOut(item)),
+      previouslyHad: items.filter(isPreviouslyHad),
     };
   }, [items]);
 
   const openDetail = (id) => navigation.navigate("ItemDetail", { itemId: id });
 
   const statusText = (item) => {
-    if (item.quantity > 0) {
-      return `${item.quantity} ${item.unit} in stock`;
+    if (item.quantity <= 0) {
+      return "Out of stock";
     }
-    if (isTrackingOpened(item)) {
-      return `${item.openedPercent}% of opened unit left`;
+    if (item.quantity === 1 && isTrackingOpened(item)) {
+      return `${item.openedPercent}% of the last unit left`;
     }
-    return "Out of stock";
+    return `${item.quantity} ${item.unit} left`;
   };
 
   const markBought = (item) => {
-    const q = item.quantity + 1;
+    const q = Math.max(0, item.quantity) + 1;
     updateItem(
       item.id,
       { quantity: q },
@@ -65,23 +67,38 @@ export default function ShoppingScreen({ navigation }) {
   };
 
   const neverRecommend = (item) => {
-    Alert.alert(
-      "Stop recommending?",
-      `"${item.name}" will no longer appear in your shopping list. You can re-enable it from the item's edit screen.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Don't recommend",
-          style: "destructive",
-          onPress: () =>
-            updateItem(
-              item.id,
-              { recurring: false, neverRecommend: true },
-              { action: "Removed from shopping list" }
-            ),
-        },
-      ]
+    Alert.alert("Remove from shopping list?", `"${item.name}"`, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Remove",
+        style: "destructive",
+        onPress: () =>
+          updateItem(
+            item.id,
+            { recurring: false, neverRecommend: true },
+            { action: "Removed from shopping list" }
+          ),
+      },
+    ]);
+  };
+
+  const addToShoppingList = (item) => {
+    updateItem(
+      item.id,
+      { recurring: true, neverRecommend: false },
+      { action: "Added to shopping list" }
     );
+  };
+
+  const confirmDelete = (item) => {
+    Alert.alert("Delete item?", `"${item.name}" will be removed permanently.`, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: () => deleteItem(item.id),
+      },
+    ]);
   };
 
   const renderRow = (item, { showBought }) => {
@@ -152,25 +169,90 @@ export default function ShoppingScreen({ navigation }) {
     );
   };
 
-  const nothingRecurring = buyNow.length === 0 && saved.length === 0;
+  const renderPreviouslyHadRow = (item) => {
+    const meta = getCategoryMeta(item.category);
+    return (
+      <View key={item.id} style={styles.row}>
+        <TouchableOpacity
+          activeOpacity={0.7}
+          style={styles.rowMain}
+          onPress={() => openDetail(item.id)}
+        >
+          {item.imageUri ? (
+            <Image source={{ uri: item.imageUri }} style={styles.thumb} />
+          ) : (
+            <View
+              style={[
+                styles.thumb,
+                styles.thumbPlaceholder,
+                { backgroundColor: hexToRgba(meta.color, 0.18) },
+              ]}
+            >
+              <MaterialCommunityIcons
+                name={meta.icon}
+                size={24}
+                color={meta.color}
+              />
+            </View>
+          )}
+
+          <View style={styles.rowInfo}>
+            <Text style={styles.rowName} numberOfLines={1}>
+              {item.name}
+            </Text>
+            <Text style={styles.rowStatus} numberOfLines={1}>
+              Ran out
+            </Text>
+          </View>
+        </TouchableOpacity>
+
+        <View style={styles.rowActions}>
+          <TouchableOpacity
+            activeOpacity={0.7}
+            style={styles.boughtButton}
+            onPress={() => addToShoppingList(item)}
+            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+          >
+            <MaterialCommunityIcons
+              name="cart-plus"
+              size={18}
+              color={colors.white}
+            />
+          </TouchableOpacity>
+          <TouchableOpacity
+            activeOpacity={0.7}
+            style={styles.blockButton}
+            onPress={() => confirmDelete(item)}
+            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+          >
+            <MaterialCommunityIcons
+              name="trash-can-outline"
+              size={18}
+              color={colors.danger}
+            />
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  };
+
+  const nothingHere =
+    buyNow.length === 0 &&
+    saved.length === 0 &&
+    previouslyHad.length === 0;
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
       <View style={styles.header}>
         <Text style={styles.title}>Shopping</Text>
         <Text style={styles.subtitle}>
-          {buyNow.length} to buy · {saved.length} saved
+          {buyNow.length} to buy · {saved.length} saved ·{" "}
+          {previouslyHad.length} previously had
         </Text>
       </View>
 
-      {nothingRecurring ? (
-        <EmptyState
-          icon="cart-outline"
-          title="No shopping items yet"
-          subtitle={
-            'Turn on "Re-buy when empty" for an item (in Add or Edit) and it will show up here when it runs low.'
-          }
-        />
+      {nothingHere ? (
+        <EmptyState icon="cart-outline" title="No shopping items yet" />
       ) : (
         <ScrollView
           style={styles.scroll}
@@ -189,9 +271,7 @@ export default function ShoppingScreen({ navigation }) {
             </View>
           </View>
           {buyNow.length === 0 ? (
-            <Text style={styles.emptySection}>
-              Nothing's running low right now. Nice and stocked!
-            </Text>
+            <Text style={styles.emptySection}>Nothing to buy.</Text>
           ) : (
             buyNow.map((item) => renderRow(item, { showBought: true }))
           )}
@@ -208,11 +288,28 @@ export default function ShoppingScreen({ navigation }) {
             </View>
           </View>
           {saved.length === 0 ? (
-            <Text style={styles.emptySection}>
-              Recurring items you have in stock will be saved here.
-            </Text>
+            <Text style={styles.emptySection}>Nothing saved.</Text>
           ) : (
             saved.map((item) => renderRow(item, { showBought: false }))
+          )}
+
+          <View style={[styles.sectionHeaderRow, styles.sectionSpacer]}>
+            <MaterialCommunityIcons
+              name="history"
+              size={20}
+              color={colors.textSecondary}
+            />
+            <Text style={styles.sectionTitle}>Previously Had</Text>
+            <View style={styles.sectionCount}>
+              <Text style={styles.sectionCountText}>
+                {previouslyHad.length}
+              </Text>
+            </View>
+          </View>
+          {previouslyHad.length === 0 ? (
+            <Text style={styles.emptySection}>Nothing here.</Text>
+          ) : (
+            previouslyHad.map((item) => renderPreviouslyHadRow(item))
           )}
 
           <View style={styles.bottomSpacer} />
@@ -292,6 +389,11 @@ const createStyles = (colors) =>
       padding: SPACING.card,
       marginBottom: SPACING.card,
       ...SHADOW,
+    },
+    rowMain: {
+      flex: 1,
+      flexDirection: "row",
+      alignItems: "center",
     },
     thumb: {
       width: 48,

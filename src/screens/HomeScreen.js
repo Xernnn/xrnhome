@@ -5,7 +5,6 @@ import {
   ScrollView,
   TouchableOpacity,
   StyleSheet,
-  Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
@@ -17,33 +16,31 @@ import ItemCard, { ITEM_CARD_WIDTH } from "../components/ItemCard";
 import EmptyState from "../components/EmptyState";
 import {
   SPACING,
-  RADIUS,
-  SHADOW,
   CATEGORIES,
-  STORAGE_LOCATIONS,
   getCategoryMeta,
+  isInKitchen,
 } from "../utils/constants";
 
-const LOCATION_FILTERS = ["All", ...STORAGE_LOCATIONS];
-
 export default function HomeScreen({ navigation }) {
-  const { items, updateItem, deleteItem } = useInventory();
+  const { items, updateItem } = useInventory();
   const { colors, isDark, toggleTheme } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
   const [search, setSearch] = useState("");
-  const [locationFilter, setLocationFilter] = useState("All");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(() => new Set());
+
+  const kitchenItems = useMemo(() => items.filter(isInKitchen), [items]);
 
   const filteredItems = useMemo(() => {
     const query = search.trim().toLowerCase();
-    return items.filter((item) => {
-      const matchesSearch =
-        query.length === 0 || item.name.toLowerCase().includes(query);
-      const matchesLocation =
-        locationFilter === "All" || item.storageLocation === locationFilter;
-      return matchesSearch && matchesLocation;
-    });
-  }, [items, search, locationFilter]);
+    if (query.length === 0) {
+      return kitchenItems;
+    }
+    return kitchenItems.filter((item) =>
+      item.name.toLowerCase().includes(query)
+    );
+  }, [kitchenItems, search]);
 
   const groupedByCategory = useMemo(() => {
     return CATEGORIES.map((cat) => ({
@@ -55,27 +52,35 @@ export default function HomeScreen({ navigation }) {
   const openAddItem = () => navigation.navigate("AddItem");
   const openDetail = (id) => navigation.navigate("ItemDetail", { itemId: id });
 
+  const toggleSearch = () => {
+    setSearchOpen((prev) => {
+      if (prev) {
+        setSearch("");
+      }
+      return !prev;
+    });
+  };
+
+  const toggleCategory = (label) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(label)) {
+        next.delete(label);
+      } else {
+        next.add(label);
+      }
+      return next;
+    });
+  };
+
   const handleStep = (item, dir) => {
     const result = computeStep(item, dir);
-    if (result.willRemove) {
-      Alert.alert(
-        "All gone",
-        `"${item.name}" is finished. Remove it from your kitchen?`,
-        [
-          { text: "Keep", style: "cancel" },
-          {
-            text: "Remove",
-            style: "destructive",
-            onPress: () => deleteItem(item.id),
-          },
-        ]
-      );
-    } else if (result.changes) {
+    if (result.changes) {
       updateItem(item.id, result.changes, result.historyEntry);
     }
   };
 
-  const hasAnyItems = items.length > 0;
+  const hasAnyItems = kitchenItems.length > 0;
   const totalFiltered = filteredItems.length;
 
   return (
@@ -84,11 +89,23 @@ export default function HomeScreen({ navigation }) {
         <View style={styles.headerLeft}>
           <Text style={styles.logo}>PantryPal</Text>
           <Text style={styles.subtitle}>
-            {items.length} {items.length === 1 ? "item" : "items"} in your
+            {kitchenItems.length}{" "}
+            {kitchenItems.length === 1 ? "item" : "items"} in your
             kitchen
           </Text>
         </View>
         <View style={styles.headerActions}>
+          <TouchableOpacity
+            activeOpacity={0.7}
+            style={[styles.iconButton, searchOpen && styles.iconButtonActive]}
+            onPress={toggleSearch}
+          >
+            <MaterialCommunityIcons
+              name={searchOpen ? "close" : "magnify"}
+              size={22}
+              color={searchOpen ? colors.accent : colors.textPrimary}
+            />
+          </TouchableOpacity>
           <TouchableOpacity
             activeOpacity={0.7}
             style={styles.iconButton}
@@ -100,13 +117,6 @@ export default function HomeScreen({ navigation }) {
               color={colors.textPrimary}
             />
           </TouchableOpacity>
-          <TouchableOpacity
-            activeOpacity={0.7}
-            style={styles.addButton}
-            onPress={openAddItem}
-          >
-            <MaterialCommunityIcons name="plus" size={24} color={colors.white} />
-          </TouchableOpacity>
         </View>
       </View>
 
@@ -114,7 +124,6 @@ export default function HomeScreen({ navigation }) {
         <EmptyState
           icon="fridge-outline"
           title="Your kitchen is empty"
-          subtitle="Start tracking your ingredients and never run out of the essentials again."
           actionLabel="Add your first item"
           onAction={openAddItem}
         />
@@ -125,52 +134,32 @@ export default function HomeScreen({ navigation }) {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          <View style={styles.searchWrap}>
-            <SearchBar value={search} onChangeText={setSearch} />
-          </View>
-
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.chipsRow}
-          >
-            {LOCATION_FILTERS.map((loc) => {
-              const active = loc === locationFilter;
-              return (
-                <TouchableOpacity
-                  key={loc}
-                  activeOpacity={0.7}
-                  onPress={() => setLocationFilter(loc)}
-                  style={[styles.chip, active && styles.chipActive]}
-                >
-                  <Text
-                    style={[styles.chipText, active && styles.chipTextActive]}
-                  >
-                    {loc}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
+          {searchOpen ? (
+            <View style={styles.searchWrap}>
+              <SearchBar value={search} onChangeText={setSearch} autoFocus />
+            </View>
+          ) : null}
 
           {groupedByCategory.length === 0 ? (
-            <EmptyState
-              icon="magnify"
-              title="No matches found"
-              subtitle={`No items match your current search${
-                locationFilter !== "All" ? ` in ${locationFilter}` : ""
-              }.`}
-            />
+            <EmptyState icon="magnify" title="No matches found" />
           ) : (
             <>
-              <Text style={styles.resultCount}>
-                Showing {totalFiltered} {totalFiltered === 1 ? "item" : "items"}
-              </Text>
+              {searchOpen ? (
+                <Text style={styles.resultCount}>
+                  Showing {totalFiltered}{" "}
+                  {totalFiltered === 1 ? "item" : "items"}
+                </Text>
+              ) : null}
               {groupedByCategory.map((group) => {
                 const meta = getCategoryMeta(group.category.label);
+                const isCollapsed = collapsed.has(group.category.label);
                 return (
                   <View key={group.category.label} style={styles.categoryBlock}>
-                    <View style={styles.categoryHeader}>
+                    <TouchableOpacity
+                      activeOpacity={0.7}
+                      style={styles.categoryHeader}
+                      onPress={() => toggleCategory(group.category.label)}
+                    >
                       <MaterialCommunityIcons
                         name={meta.icon}
                         size={20}
@@ -184,22 +173,30 @@ export default function HomeScreen({ navigation }) {
                           {group.items.length}
                         </Text>
                       </View>
-                    </View>
-                    <ScrollView
-                      horizontal
-                      showsHorizontalScrollIndicator={false}
-                      contentContainerStyle={styles.cardsRow}
-                    >
-                      {group.items.map((item) => (
-                        <View key={item.id} style={styles.cardWrap}>
-                          <ItemCard
-                            item={item}
-                            onPress={() => openDetail(item.id)}
-                            onStep={handleStep}
-                          />
-                        </View>
-                      ))}
-                    </ScrollView>
+                      <View style={styles.headerSpacer} />
+                      <MaterialCommunityIcons
+                        name={isCollapsed ? "chevron-down" : "chevron-up"}
+                        size={22}
+                        color={colors.textSecondary}
+                      />
+                    </TouchableOpacity>
+                    {isCollapsed ? null : (
+                      <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={styles.cardsRow}
+                      >
+                        {group.items.map((item) => (
+                          <View key={item.id} style={styles.cardWrap}>
+                            <ItemCard
+                              item={item}
+                              onPress={() => openDetail(item.id)}
+                              onStep={handleStep}
+                            />
+                          </View>
+                        ))}
+                      </ScrollView>
+                    )}
                   </View>
                 );
               })}
@@ -259,13 +256,8 @@ const createStyles = (colors) =>
       justifyContent: "center",
       marginRight: SPACING.inner,
     },
-    addButton: {
-      width: 44,
-      height: 44,
-      borderRadius: 22,
-      backgroundColor: colors.accent,
-      alignItems: "center",
-      justifyContent: "center",
+    iconButtonActive: {
+      backgroundColor: colors.accentLight,
     },
     scroll: {
       flex: 1,
@@ -275,35 +267,12 @@ const createStyles = (colors) =>
     },
     searchWrap: {
       paddingHorizontal: SPACING.screen,
-      marginBottom: SPACING.card,
-    },
-    chipsRow: {
-      paddingHorizontal: SPACING.screen,
-      paddingBottom: 4,
-    },
-    chip: {
-      paddingVertical: 8,
-      paddingHorizontal: 16,
-      borderRadius: RADIUS.pill,
-      backgroundColor: colors.surfaceAlt,
-      marginRight: SPACING.inner,
-    },
-    chipActive: {
-      backgroundColor: colors.accent,
-    },
-    chipText: {
-      fontSize: 14,
-      fontWeight: "600",
-      color: colors.textSecondary,
-    },
-    chipTextActive: {
-      color: colors.white,
+      marginBottom: SPACING.inner,
     },
     resultCount: {
       fontSize: 13,
       color: colors.textSecondary,
       paddingHorizontal: SPACING.screen,
-      marginTop: SPACING.card,
       marginBottom: 4,
     },
     categoryBlock: {
@@ -313,6 +282,7 @@ const createStyles = (colors) =>
       flexDirection: "row",
       alignItems: "center",
       paddingHorizontal: SPACING.screen,
+      paddingVertical: 4,
       marginBottom: SPACING.inner,
     },
     categoryName: {
@@ -335,6 +305,9 @@ const createStyles = (colors) =>
       fontSize: 12,
       fontWeight: "700",
       color: colors.textSecondary,
+    },
+    headerSpacer: {
+      flex: 1,
     },
     cardsRow: {
       paddingHorizontal: SPACING.screen,
