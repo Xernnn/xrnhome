@@ -9,8 +9,7 @@ import React, {
 import { useColorScheme } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { LIGHT_COLORS, DARK_COLORS } from "../utils/constants";
-
-const THEME_KEY = "pantrypal_theme_mode";
+import { THEME_KEY, moveLegacyKeys } from "../utils/storage";
 
 const ThemeContext = createContext(null);
 
@@ -22,6 +21,7 @@ export function ThemeProvider({ children }) {
     let mounted = true;
     (async () => {
       try {
+        await moveLegacyKeys();
         const stored = await AsyncStorage.getItem(THEME_KEY);
         if (
           mounted &&

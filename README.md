@@ -1,4 +1,4 @@
-# PantryPal
+# xrnhome
 
 A simple kitchen inventory app for your phone. Add the food you keep at home, tap
 a button when you use some, and let the app tell you what needs restocking.
@@ -36,8 +36,8 @@ leaves your phone.
 ## Getting started
 
 ```bash
-git clone https://github.com/Xernnn/kitchenpal
-cd kitchenpal
+git clone https://github.com/Xernnn/xrnhome
+cd xrnhome
 npm install
 npm start
 ```

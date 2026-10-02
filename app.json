@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "PantryPal",
-    "slug": "pantrypal",
+    "name": "xrnhome",
+    "slug": "xrnhome",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -16,10 +16,10 @@
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.xern.pantrypal",
+      "bundleIdentifier": "com.xern.xrnhome",
       "infoPlist": {
-        "NSCameraUsageDescription": "PantryPal needs access to your camera so you can take photos of your kitchen items.",
-        "NSPhotoLibraryUsageDescription": "PantryPal needs access to your photo library so you can choose photos of your kitchen items."
+        "NSCameraUsageDescription": "xrnhome needs access to your camera so you can take photos of your items.",
+        "NSPhotoLibraryUsageDescription": "xrnhome needs access to your photo library so you can choose photos of your items."
       }
     },
     "android": {
@@ -27,7 +27,7 @@
         "android.permission.CAMERA",
         "android.permission.READ_EXTERNAL_STORAGE"
       ],
-      "package": "com.xern.pantrypal",
+      "package": "com.xern.xrnhome",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#2E7D32"
@@ -40,17 +40,12 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "PantryPal needs access to your photos so you can attach images to your kitchen items.",
-          "cameraPermission": "PantryPal needs access to your camera so you can take photos of your kitchen items.",
+          "photosPermission": "xrnhome needs access to your photos so you can attach images to your items.",
+          "cameraPermission": "xrnhome needs access to your camera so you can take photos of your items.",
           "microphonePermission": false
         }
       ],
       "expo-font"
-    ],
-    "extra": {
-      "eas": {
-        "projectId": "4ecce614-3535-41a1-bde6-606c6be57e81"
-      }
-    }
+    ]
   }
 }
