@@ -5,6 +5,7 @@ import {
   ScrollView,
   TouchableOpacity,
   StyleSheet,
+  useWindowDimensions,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
@@ -12,44 +13,56 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useInventory, computeStep } from "../context/InventoryContext";
 import { useTheme } from "../context/ThemeContext";
 import SearchBar from "../components/SearchBar";
-import ItemCard, { ITEM_CARD_WIDTH } from "../components/ItemCard";
+import ItemCard from "../components/ItemCard";
+import CategoryBlobGrid, { BLOB_HALF_GAP } from "../components/CategoryBlobGrid";
 import EmptyState from "../components/EmptyState";
 import {
   SPACING,
-  CATEGORIES,
-  getCategoryMeta,
-  isInKitchen,
+  getRoomCategories,
+  getRoomMeta,
+  isInStock,
 } from "../utils/constants";
 
-export default function HomeScreen({ navigation }) {
+// Blobs reach out to the usual screen margin; their inner gap sits inside it.
+const GRID_SIDE_PADDING = SPACING.screen - BLOB_HALF_GAP;
+
+export default function RoomScreen({ navigation, route }) {
+  const room = getRoomMeta(route.params && route.params.room);
   const { items, updateItem } = useInventory();
   const { colors, isDark, toggleTheme } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const { width: windowWidth } = useWindowDimensions();
 
   const [search, setSearch] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
-  const [collapsed, setCollapsed] = useState(() => new Set());
 
-  const kitchenItems = useMemo(() => items.filter(isInKitchen), [items]);
+  const roomItems = useMemo(
+    () => items.filter((item) => item.room === room.key && isInStock(item)),
+    [items, room.key]
+  );
 
   const filteredItems = useMemo(() => {
     const query = search.trim().toLowerCase();
     if (query.length === 0) {
-      return kitchenItems;
+      return roomItems;
     }
-    return kitchenItems.filter((item) =>
+    return roomItems.filter((item) =>
       item.name.toLowerCase().includes(query)
     );
-  }, [kitchenItems, search]);
+  }, [roomItems, search]);
 
   const groupedByCategory = useMemo(() => {
-    return CATEGORIES.map((cat) => ({
-      category: cat,
-      items: filteredItems.filter((item) => item.category === cat.label),
-    })).filter((group) => group.items.length > 0);
-  }, [filteredItems]);
+    const categories = getRoomCategories(room.key);
+    const byLabel = new Map(categories.map((cat) => [cat.label, []]));
+    filteredItems.forEach((item) => {
+      (byLabel.get(item.category) || byLabel.get("Other")).push(item);
+    });
+    return categories
+      .map((cat) => ({ meta: cat, items: byLabel.get(cat.label) }))
+      .filter((group) => group.items.length > 0);
+  }, [filteredItems, room.key]);
 
-  const openAddItem = () => navigation.navigate("AddItem");
+  const openAddItem = () => navigation.navigate("AddItem", { room: room.key });
   const openDetail = (id) => navigation.navigate("ItemDetail", { itemId: id });
 
   const toggleSearch = () => {
@@ -61,18 +74,6 @@ export default function HomeScreen({ navigation }) {
     });
   };
 
-  const toggleCategory = (label) => {
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      if (next.has(label)) {
-        next.delete(label);
-      } else {
-        next.add(label);
-      }
-      return next;
-    });
-  };
-
   const handleStep = (item, dir) => {
     const result = computeStep(item, dir);
     if (result.changes) {
@@ -80,18 +81,17 @@ export default function HomeScreen({ navigation }) {
     }
   };
 
-  const hasAnyItems = kitchenItems.length > 0;
+  const hasAnyItems = roomItems.length > 0;
   const totalFiltered = filteredItems.length;
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <Text style={styles.logo}>PantryPal</Text>
+          <Text style={styles.logo}>{room.label}</Text>
           <Text style={styles.subtitle}>
-            {kitchenItems.length}{" "}
-            {kitchenItems.length === 1 ? "item" : "items"} in your
-            kitchen
+            {roomItems.length} {roomItems.length === 1 ? "item" : "items"} in
+            your {room.label.toLowerCase()}
           </Text>
         </View>
         <View style={styles.headerActions}>
@@ -122,8 +122,8 @@ export default function HomeScreen({ navigation }) {
 
       {!hasAnyItems ? (
         <EmptyState
-          icon="fridge-outline"
-          title="Your kitchen is empty"
+          icon={room.emptyIcon}
+          title={`Your ${room.label.toLowerCase()} is empty`}
           actionLabel="Add your first item"
           onAction={openAddItem}
         />
@@ -150,56 +150,20 @@ export default function HomeScreen({ navigation }) {
                   {totalFiltered === 1 ? "item" : "items"}
                 </Text>
               ) : null}
-              {groupedByCategory.map((group) => {
-                const meta = getCategoryMeta(group.category.label);
-                const isCollapsed = collapsed.has(group.category.label);
-                return (
-                  <View key={group.category.label} style={styles.categoryBlock}>
-                    <TouchableOpacity
-                      activeOpacity={0.7}
-                      style={styles.categoryHeader}
-                      onPress={() => toggleCategory(group.category.label)}
-                    >
-                      <MaterialCommunityIcons
-                        name={meta.icon}
-                        size={20}
-                        color={meta.color}
-                      />
-                      <Text style={styles.categoryName}>
-                        {group.category.label}
-                      </Text>
-                      <View style={styles.countBadge}>
-                        <Text style={styles.countBadgeText}>
-                          {group.items.length}
-                        </Text>
-                      </View>
-                      <View style={styles.headerSpacer} />
-                      <MaterialCommunityIcons
-                        name={isCollapsed ? "chevron-down" : "chevron-up"}
-                        size={22}
-                        color={colors.textSecondary}
-                      />
-                    </TouchableOpacity>
-                    {isCollapsed ? null : (
-                      <ScrollView
-                        horizontal
-                        showsHorizontalScrollIndicator={false}
-                        contentContainerStyle={styles.cardsRow}
-                      >
-                        {group.items.map((item) => (
-                          <View key={item.id} style={styles.cardWrap}>
-                            <ItemCard
-                              item={item}
-                              onPress={() => openDetail(item.id)}
-                              onStep={handleStep}
-                            />
-                          </View>
-                        ))}
-                      </ScrollView>
-                    )}
-                  </View>
-                );
-              })}
+              <View style={styles.grid}>
+                <CategoryBlobGrid
+                  groups={groupedByCategory}
+                  width={windowWidth - GRID_SIDE_PADDING * 2}
+                  renderItem={(item, cardWidth) => (
+                    <ItemCard
+                      item={item}
+                      width={cardWidth}
+                      onPress={() => openDetail(item.id)}
+                      onStep={handleStep}
+                    />
+                  )}
+                />
+              </View>
             </>
           )}
           <View style={styles.bottomSpacer} />
@@ -275,47 +239,9 @@ const createStyles = (colors) =>
       paddingHorizontal: SPACING.screen,
       marginBottom: 4,
     },
-    categoryBlock: {
-      marginTop: SPACING.card,
-    },
-    categoryHeader: {
-      flexDirection: "row",
-      alignItems: "center",
-      paddingHorizontal: SPACING.screen,
-      paddingVertical: 4,
-      marginBottom: SPACING.inner,
-    },
-    categoryName: {
-      fontSize: 18,
-      fontWeight: "700",
-      color: colors.textPrimary,
-      marginLeft: SPACING.inner,
-    },
-    countBadge: {
-      marginLeft: SPACING.inner,
-      minWidth: 22,
-      height: 22,
-      paddingHorizontal: 6,
-      borderRadius: 11,
-      backgroundColor: colors.surfaceAlt,
-      alignItems: "center",
-      justifyContent: "center",
-    },
-    countBadgeText: {
-      fontSize: 12,
-      fontWeight: "700",
-      color: colors.textSecondary,
-    },
-    headerSpacer: {
-      flex: 1,
-    },
-    cardsRow: {
-      paddingHorizontal: SPACING.screen,
-      paddingVertical: 4,
-    },
-    cardWrap: {
-      marginRight: SPACING.card,
-      width: ITEM_CARD_WIDTH,
+    grid: {
+      paddingHorizontal: GRID_SIDE_PADDING,
+      paddingTop: SPACING.inner,
     },
     bottomSpacer: {
       height: 96,

@@ -16,19 +16,18 @@ import {
 } from "../utils/constants";
 import { useTheme } from "../context/ThemeContext";
 
-export const ITEM_CARD_WIDTH = 172;
-
-export default function ItemCard({ item, onPress, onStep }) {
+export default function ItemCard({ item, width, onPress, onStep }) {
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
   const meta = getCategoryMeta(item.category);
   const hasImage = !!item.imageUri;
-  // A full open unit reads the same as a sealed one, so show the count instead.
-  const partiallyOpen = isTrackingOpened(item) && item.openedPercent < 100;
+  // A % item always shows its open unit, so the number on the card never
+  // switches between a percentage and a count.
+  const tracking = isTrackingOpened(item);
 
-  const bigValue = partiallyOpen ? `${item.openedPercent}%` : `${item.quantity}`;
-  const controlCaption = partiallyOpen ? "open unit" : item.unit;
+  const bigValue = tracking ? `${item.openedPercent}%` : `${item.quantity}`;
+  const caption = tracking ? `${item.quantity} ${item.unit}` : item.unit;
 
   const handleStep = (dir) => {
     if (onStep) {
@@ -37,8 +36,12 @@ export default function ItemCard({ item, onPress, onStep }) {
   };
 
   return (
-    <TouchableOpacity activeOpacity={0.7} style={styles.card} onPress={onPress}>
-      <View style={styles.imageWrap}>
+    <TouchableOpacity
+      activeOpacity={0.7}
+      style={[styles.card, { width }]}
+      onPress={onPress}
+    >
+      <View style={[styles.imageWrap, { height: Math.round(width * 0.8) }]}>
         {hasImage ? (
           <Image source={{ uri: item.imageUri }} style={styles.image} />
         ) : (
@@ -50,7 +53,7 @@ export default function ItemCard({ item, onPress, onStep }) {
           >
             <MaterialCommunityIcons
               name={meta.icon}
-              size={44}
+              size={32}
               color={meta.color}
             />
           </View>
@@ -60,27 +63,16 @@ export default function ItemCard({ item, onPress, onStep }) {
           <View style={styles.recurringBadge}>
             <MaterialCommunityIcons
               name="cart"
-              size={13}
+              size={11}
               color={colors.white}
             />
           </View>
         ) : null}
-
-        {partiallyOpen ? (
-          <View style={styles.openedBadge}>
-            <Text style={styles.openedBadgeText}>{item.openedPercent}%</Text>
-          </View>
-        ) : null}
       </View>
 
-      <View style={styles.body}>
-        <Text style={styles.name} numberOfLines={2}>
-          {item.name}
-        </Text>
-        <Text style={styles.subtitle} numberOfLines={1}>
-          {item.quantity} {item.unit}
-        </Text>
-      </View>
+      <Text style={styles.name} numberOfLines={2}>
+        {item.name}
+      </Text>
 
       <View style={styles.controlRow}>
         <TouchableOpacity
@@ -89,13 +81,25 @@ export default function ItemCard({ item, onPress, onStep }) {
           onPress={() => handleStep(-1)}
           hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
         >
-          <MaterialCommunityIcons name="minus" size={18} color={colors.accent} />
+          <MaterialCommunityIcons name="minus" size={14} color={colors.accent} />
         </TouchableOpacity>
 
         <View style={styles.valueWrap}>
-          <Text style={styles.value}>{bigValue}</Text>
-          <Text style={styles.valueCaption} numberOfLines={1}>
-            {controlCaption}
+          <Text
+            style={styles.value}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.75}
+          >
+            {bigValue}
+          </Text>
+          <Text
+            style={styles.valueCaption}
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.8}
+          >
+            {caption}
           </Text>
         </View>
 
@@ -105,11 +109,9 @@ export default function ItemCard({ item, onPress, onStep }) {
           onPress={() => handleStep(1)}
           hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
         >
-          <MaterialCommunityIcons name="plus" size={18} color={colors.accent} />
+          <MaterialCommunityIcons name="plus" size={14} color={colors.accent} />
         </TouchableOpacity>
       </View>
-
-      <View style={[styles.colorStrip, { backgroundColor: meta.color }]} />
     </TouchableOpacity>
   );
 }
@@ -117,7 +119,6 @@ export default function ItemCard({ item, onPress, onStep }) {
 const createStyles = (colors) =>
   StyleSheet.create({
     card: {
-      width: ITEM_CARD_WIDTH,
       backgroundColor: colors.surface,
       borderRadius: RADIUS.card,
       overflow: "hidden",
@@ -125,7 +126,6 @@ const createStyles = (colors) =>
     },
     imageWrap: {
       width: "100%",
-      height: 130,
       backgroundColor: colors.surfaceAlt,
     },
     image: {
@@ -141,60 +141,37 @@ const createStyles = (colors) =>
     },
     recurringBadge: {
       position: "absolute",
-      top: 8,
-      left: 8,
-      width: 24,
-      height: 24,
-      borderRadius: 12,
+      top: 6,
+      left: 6,
+      width: 20,
+      height: 20,
+      borderRadius: 10,
       backgroundColor: colors.accent,
       alignItems: "center",
       justifyContent: "center",
       ...SHADOW,
     },
-    openedBadge: {
-      position: "absolute",
-      top: 8,
-      right: 8,
-      paddingHorizontal: 8,
-      paddingVertical: 3,
-      borderRadius: RADIUS.pill,
-      backgroundColor: colors.surface,
-      ...SHADOW,
-    },
-    openedBadgeText: {
+    name: {
       fontSize: 12,
       fontWeight: "700",
-      color: colors.accent,
-    },
-    body: {
-      paddingHorizontal: 12,
-      paddingTop: 10,
-      paddingBottom: 6,
-    },
-    name: {
-      fontSize: 15,
-      fontWeight: "700",
       color: colors.textPrimary,
-      lineHeight: 19,
-      minHeight: 38,
-    },
-    subtitle: {
-      fontSize: 13,
-      color: colors.textSecondary,
-      marginTop: 4,
+      lineHeight: 15,
+      height: 30,
+      marginHorizontal: 8,
+      marginTop: 6,
     },
     controlRow: {
       flexDirection: "row",
       alignItems: "center",
       justifyContent: "space-between",
-      paddingHorizontal: 10,
-      paddingBottom: 10,
+      paddingHorizontal: 4,
+      paddingBottom: 6,
       paddingTop: 2,
     },
     stepButton: {
-      width: 38,
-      height: 38,
-      borderRadius: 19,
+      width: 24,
+      height: 24,
+      borderRadius: 12,
       backgroundColor: colors.accentLight,
       alignItems: "center",
       justifyContent: "center",
@@ -205,17 +182,12 @@ const createStyles = (colors) =>
       justifyContent: "center",
     },
     value: {
-      fontSize: 18,
+      fontSize: 14,
       fontWeight: "800",
       color: colors.textPrimary,
     },
     valueCaption: {
-      fontSize: 10,
+      fontSize: 9,
       color: colors.textSecondary,
-      marginTop: 1,
-    },
-    colorStrip: {
-      height: 4,
-      width: "100%",
     },
   });

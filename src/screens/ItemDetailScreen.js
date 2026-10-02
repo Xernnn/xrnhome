@@ -22,6 +22,7 @@ import {
   RADIUS,
   SHADOW,
   getCategoryMeta,
+  getRoomMeta,
   hexToRgba,
   isTrackingOpened,
 } from "../utils/constants";
@@ -78,9 +79,10 @@ export default function ItemDetailScreen({ navigation, route }) {
   }
 
   const meta = getCategoryMeta(item.category);
+  const room = getRoomMeta(item.room);
   const tracking = isTrackingOpened(item);
-  // A full open unit reads the same as a sealed one, so it earns no summary card.
-  const partiallyOpen = tracking && item.openedPercent < 100;
+  // An empty % item has no open unit to show, but it is still a % item.
+  const showOpenUnit = tracking && item.quantity > 0;
 
   const handleStep = (dir) => {
     const result = computeStep(item, dir);
@@ -214,23 +216,31 @@ export default function ItemDetailScreen({ navigation, route }) {
 
           <View style={styles.badgeRow}>
             <CategoryBadge category={item.category} />
+            <View style={styles.roomBadge}>
+              <MaterialCommunityIcons
+                name={room.icon}
+                size={15}
+                color={colors.textSecondary}
+              />
+              <Text style={styles.roomBadgeText}>{room.label}</Text>
+            </View>
           </View>
 
           <View
             style={[
               styles.infoCardsRow,
-              !partiallyOpen && styles.infoCardsRowSingle,
+              !showOpenUnit && styles.infoCardsRowSingle,
             ]}
           >
             <View
-              style={[styles.infoCard, partiallyOpen && styles.infoCardWithGap]}
+              style={[styles.infoCard, showOpenUnit && styles.infoCardWithGap]}
             >
               <Text style={styles.infoCardLabel}>Units</Text>
               <Text style={styles.infoCardValue}>
                 {item.quantity} {item.unit}
               </Text>
             </View>
-            {partiallyOpen ? (
+            {showOpenUnit ? (
               <View style={styles.infoCard}>
                 <Text style={styles.infoCardLabel}>Open unit</Text>
                 <Text style={styles.infoCardValue}>
@@ -266,7 +276,7 @@ export default function ItemDetailScreen({ navigation, route }) {
 
           <Text style={styles.sectionTitle}>Quick Update</Text>
 
-          {tracking ? (
+          {showOpenUnit ? (
             <View style={styles.openedControlCard}>
               <Text style={styles.openedControlLabel}>Open unit</Text>
               <View style={styles.openedControlRow}>
@@ -441,6 +451,21 @@ const createStyles = (colors) =>
       alignItems: "center",
       flexWrap: "wrap",
       marginBottom: SPACING.screen,
+    },
+    roomBadge: {
+      flexDirection: "row",
+      alignItems: "center",
+      marginLeft: SPACING.inner,
+      paddingVertical: 5,
+      paddingHorizontal: 10,
+      borderRadius: RADIUS.pill,
+      backgroundColor: colors.surfaceAlt,
+    },
+    roomBadgeText: {
+      marginLeft: 4,
+      fontSize: 13,
+      fontWeight: "600",
+      color: colors.textSecondary,
     },
     infoCardsRow: {
       flexDirection: "row",
