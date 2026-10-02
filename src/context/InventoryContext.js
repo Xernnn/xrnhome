@@ -5,6 +5,7 @@ import React, {
   useReducer,
   useMemo,
   useCallback,
+  useRef,
 } from "react";
 import { View, ActivityIndicator, StyleSheet } from "react-native";
 import {
@@ -14,6 +15,7 @@ import {
   saveSchemaVersion,
   CURRENT_SCHEMA_VERSION,
 } from "../utils/storage";
+import { deleteImage } from "../utils/images";
 import {
   DEFAULT_ROOM,
   MAX_HISTORY_ENTRIES,
@@ -23,6 +25,7 @@ import {
   isTrackingOpened,
   itemKey,
   roomExists,
+  roundPercent,
 } from "../utils/constants";
 import { useTheme } from "./ThemeContext";
 
@@ -31,6 +34,7 @@ const InventoryContext = createContext(null);
 const initialState = {
   items: [],
   loading: true,
+  undo: null, // { item, index } — the most recently deleted item, for undo.
 };
 
 const ACTIONS = {
@@ -38,6 +42,9 @@ const ACTIONS = {
   ADD_ITEM: "ADD_ITEM",
   UPDATE_ITEM: "UPDATE_ITEM",
   DELETE_ITEM: "DELETE_ITEM",
+  RESTORE_ITEM: "RESTORE_ITEM",
+  CLEAR_UNDO: "CLEAR_UNDO",
+  REPLACE_ALL: "REPLACE_ALL",
 };
 
 const generateId = () =>
@@ -55,12 +62,40 @@ const capHistory = (history) => {
 
 const clampPercent = (value) => Math.max(0, Math.min(100, value));
 
-// A % item stays a % item when it runs out. While it is empty its open unit
-// reads 100%, so whatever gets bought next starts out full.
-const settleOpened = (item) =>
-  item.quantity <= 0 && isTrackingOpened(item)
-    ? { ...item, openedPercent: 100 }
-    : item;
+// What an item looks like once it has run out. A % item stays a % item, with
+// its open unit reading 100% so whatever gets bought next starts out full. The
+// expiry date belonged to the stock that is gone, so it is dropped.
+const settleEmpty = (item) => {
+  if (item.quantity > 0) {
+    return item;
+  }
+  return {
+    ...item,
+    openedPercent: isTrackingOpened(item) ? 100 : item.openedPercent,
+    expiryDate: null,
+  };
+};
+
+const parseExpiry = (value) => {
+  if (!value) {
+    return null;
+  }
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+};
+
+// Topping up stock that is still there keeps whichever date comes first.
+const mergedExpiry = (existing, incoming) => {
+  if (existing.quantity <= 0 || !existing.expiryDate) {
+    return incoming.expiryDate || null;
+  }
+  if (!incoming.expiryDate) {
+    return existing.expiryDate;
+  }
+  return existing.expiryDate < incoming.expiryDate
+    ? existing.expiryDate
+    : incoming.expiryDate;
+};
 
 // When two records of one item merge, the open unit comes from whichever of
 // them still has stock.
@@ -83,7 +118,7 @@ const normalizeItem = (raw, migrateToV2) => {
 
   let openedPercent = null;
   if (typeof raw.openedPercent === "number" && !Number.isNaN(raw.openedPercent)) {
-    openedPercent = clampPercent(raw.openedPercent);
+    openedPercent = roundPercent(raw.openedPercent);
   } else if (
     raw.openedAmount !== null &&
     raw.openedAmount !== undefined &&
@@ -104,7 +139,7 @@ const normalizeItem = (raw, migrateToV2) => {
   const now = new Date().toISOString();
   const room = roomExists(raw.room) ? raw.room : DEFAULT_ROOM;
 
-  return settleOpened({
+  return settleEmpty({
     id: raw.id || generateId(),
     name: typeof raw.name === "string" ? raw.name : "Untitled item",
     room,
@@ -113,6 +148,7 @@ const normalizeItem = (raw, migrateToV2) => {
     quantity: Math.max(0, quantity),
     unit: typeof raw.unit === "string" && raw.unit ? raw.unit : QUANTITY_UNITS[0],
     openedPercent,
+    expiryDate: parseExpiry(raw.expiryDate),
     recurring: !!raw.recurring,
     neverRecommend: !!raw.neverRecommend,
     note: typeof raw.note === "string" ? raw.note : "",
@@ -145,6 +181,7 @@ const mergeDuplicates = (items) => {
       ...keep,
       quantity: (keep.quantity || 0) + (drop.quantity || 0),
       openedPercent: mergedOpenedPercent(keep, drop),
+      expiryDate: mergedExpiry(keep, drop),
       imageUri: keep.imageUri || drop.imageUri,
       note: keep.note || drop.note,
       recurring: keep.recurring || drop.recurring,
@@ -255,14 +292,14 @@ function reducer(state, action) {
       const index = state.items.findIndex((item) => itemKey(item) === key);
 
       if (index === -1) {
-        return { ...state, items: [settleOpened(candidate), ...state.items] };
+        return { ...state, items: [settleEmpty(candidate), ...state.items] };
       }
 
       // Same item already tracked, so top it up instead of adding a second card.
       const existing = state.items[index];
       const quantity = (existing.quantity || 0) + (candidate.quantity || 0);
       const items = [...state.items];
-      items[index] = settleOpened({
+      items[index] = settleEmpty({
         ...existing,
         quantity,
         imageUri: existing.imageUri || candidate.imageUri,
@@ -270,6 +307,7 @@ function reducer(state, action) {
         recurring: candidate.recurring || existing.recurring,
         neverRecommend: candidate.recurring ? false : existing.neverRecommend,
         openedPercent: mergedOpenedPercent(existing, candidate),
+        expiryDate: mergedExpiry(existing, candidate),
         updatedAt: now,
         history: capHistory([
           ...(existing.history || []),
@@ -307,7 +345,7 @@ function reducer(state, action) {
       }
 
       const items = [...state.items];
-      items[index] = settleOpened({
+      items[index] = settleEmpty({
         ...existing,
         ...changes,
         id: existing.id,
@@ -318,11 +356,33 @@ function reducer(state, action) {
       return { ...state, items };
     }
 
-    case ACTIONS.DELETE_ITEM:
+    case ACTIONS.DELETE_ITEM: {
+      const index = state.items.findIndex((item) => item.id === action.payload);
+      if (index === -1) {
+        return state;
+      }
       return {
         ...state,
         items: state.items.filter((item) => item.id !== action.payload),
+        undo: { item: state.items[index], index },
       };
+    }
+
+    case ACTIONS.RESTORE_ITEM: {
+      if (!state.undo) {
+        return state;
+      }
+      const { item, index } = state.undo;
+      const items = [...state.items];
+      items.splice(Math.max(0, Math.min(index, items.length)), 0, item);
+      return { ...state, items, undo: null };
+    }
+
+    case ACTIONS.CLEAR_UNDO:
+      return { ...state, undo: null };
+
+    case ACTIONS.REPLACE_ALL:
+      return { ...state, items: action.payload, undo: null };
 
     default:
       return state;
@@ -377,7 +437,7 @@ export function InventoryProvider({ children }) {
     const openedPercent =
       itemData.openedPercent === null || itemData.openedPercent === undefined
         ? null
-        : clampPercent(Number(itemData.openedPercent));
+        : roundPercent(Number(itemData.openedPercent));
 
     const room = roomExists(itemData.room) ? itemData.room : DEFAULT_ROOM;
 
@@ -392,6 +452,7 @@ export function InventoryProvider({ children }) {
       quantity,
       unit: itemData.unit || QUANTITY_UNITS[0],
       openedPercent,
+      expiryDate: parseExpiry(itemData.expiryDate),
       recurring: !!itemData.recurring,
       neverRecommend: false,
       note: itemData.note ?? "",
@@ -417,8 +478,43 @@ export function InventoryProvider({ children }) {
     });
   }, []);
 
+  // A ref mirror of state lets the undo callbacks stay stable while still
+  // seeing which item is waiting to be undone.
+  const stateRef = useRef(state);
+  stateRef.current = state;
+
   const deleteItem = useCallback((id) => {
+    // A newer delete ends the previous undo window, so its photo can go.
+    const pending = stateRef.current.undo;
+    if (pending && pending.item.id !== id) {
+      deleteImage(pending.item.imageUri);
+    }
     dispatch({ type: ACTIONS.DELETE_ITEM, payload: id });
+  }, []);
+
+  const undoDelete = useCallback(() => {
+    dispatch({ type: ACTIONS.RESTORE_ITEM });
+  }, []);
+
+  // Drops the pending undo for good and removes that item's photo.
+  const clearUndo = useCallback(() => {
+    const pending = stateRef.current.undo;
+    if (pending) {
+      deleteImage(pending.item.imageUri);
+    }
+    dispatch({ type: ACTIONS.CLEAR_UNDO });
+  }, []);
+
+  // Swaps every item for the ones in a backup, migrated the same way stored
+  // data is on load.
+  const replaceAllItems = useCallback((rawItems, schemaVersion) => {
+    const migrate = schemaVersion < CURRENT_SCHEMA_VERSION;
+    const normalized = Array.isArray(rawItems)
+      ? rawItems.map((raw) => normalizeItem(raw, migrate)).filter(Boolean)
+      : [];
+    const items = mergeDuplicates(normalized);
+    dispatch({ type: ACTIONS.REPLACE_ALL, payload: items });
+    return items.length;
   }, []);
 
   const getItemById = useCallback(
@@ -430,18 +526,26 @@ export function InventoryProvider({ children }) {
     () => ({
       items: state.items,
       loading: state.loading,
+      undo: state.undo,
       addItem,
       updateItem,
       deleteItem,
+      undoDelete,
+      clearUndo,
       getItemById,
+      replaceAllItems,
     }),
     [
       state.items,
       state.loading,
+      state.undo,
       addItem,
       updateItem,
       deleteItem,
+      undoDelete,
+      clearUndo,
       getItemById,
+      replaceAllItems,
     ]
   );
 
