@@ -8,6 +8,7 @@ export const LIGHT_COLORS = {
   textSecondary: "#757575",
   border: "#E0E0E0",
   danger: "#F44336",
+  warning: "#E67E00",
   white: "#FFFFFF",
   shadow: "#000000",
   tabBar: "#FFFFFF",
@@ -23,6 +24,7 @@ export const DARK_COLORS = {
   textSecondary: "#9E9E9E",
   border: "#3A3A3A",
   danger: "#EF5350",
+  warning: "#FFB74D",
   white: "#FFFFFF",
   shadow: "#000000",
   tabBar: "#1A1A1A",
@@ -116,6 +118,7 @@ export const QUANTITY_UNITS = [
 export const MAX_HISTORY_ENTRIES = 20;
 export const OPENED_STEP = 10;
 export const ALMOST_OUT_PERCENT = 20;
+export const EXPIRING_SOON_DAYS = 4;
 
 export const getCategoryMeta = (label) =>
   CATEGORIES.find((c) => c.label === label) || CATEGORIES[CATEGORIES.length - 1];
@@ -154,6 +157,115 @@ export const isInStock = (item) => !!item && item.quantity > 0;
 // left stranded with no screen to reach it from.
 export const isPreviouslyHad = (item) =>
   !!item && item.quantity <= 0 && !item.recurring;
+
+// Rounds a value to the nearest OPENED_STEP and clamps it to 0..100.
+export const roundPercent = (value) => {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return 0;
+  }
+  const rounded = Math.round(value / OPENED_STEP) * OPENED_STEP;
+  return Math.max(0, Math.min(100, rounded));
+};
+
+// ----- Expiry helpers (purely in-app/visual; no notifications) -------------
+
+const startOfDay = (date) => {
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  return d;
+};
+
+export const daysUntilExpiry = (item) => {
+  if (!item || !item.expiryDate) {
+    return null;
+  }
+  const expiry = new Date(item.expiryDate);
+  if (Number.isNaN(expiry.getTime())) {
+    return null;
+  }
+  const today = startOfDay(new Date());
+  const target = startOfDay(expiry);
+  return Math.round(
+    (target.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)
+  );
+};
+
+// Returns "expired" | "soon" | "fresh" | null.
+export const getExpiryStatus = (item) => {
+  const days = daysUntilExpiry(item);
+  if (days === null) {
+    return null;
+  }
+  if (days < 0) {
+    return "expired";
+  }
+  if (days <= EXPIRING_SOON_DAYS) {
+    return "soon";
+  }
+  return "fresh";
+};
+
+export const isExpiringSoon = (item) => {
+  const status = getExpiryStatus(item);
+  return status === "expired" || status === "soon";
+};
+
+export const getExpiryLabel = (item) => {
+  const days = daysUntilExpiry(item);
+  if (days === null) {
+    return "";
+  }
+  if (days < 0) {
+    const ago = Math.abs(days);
+    return ago === 1 ? "Expired 1 day ago" : `Expired ${ago} days ago`;
+  }
+  if (days === 0) {
+    return "Expires today";
+  }
+  if (days === 1) {
+    return "Expires tomorrow";
+  }
+  return `Expires in ${days} days`;
+};
+
+export const getExpiryShortLabel = (item) => {
+  const days = daysUntilExpiry(item);
+  if (days === null) {
+    return "";
+  }
+  if (days < 0) {
+    return "Expired";
+  }
+  if (days === 0) {
+    return "Today";
+  }
+  return `${days}d`;
+};
+
+export const formatExpiryDate = (iso) => {
+  if (!iso) {
+    return "";
+  }
+  try {
+    return new Date(iso).toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+  } catch (e) {
+    return iso;
+  }
+};
+
+export const getExpiryColor = (status, colors) => {
+  if (status === "expired") {
+    return colors.danger;
+  }
+  if (status === "soon") {
+    return colors.warning;
+  }
+  return colors.textSecondary;
+};
 
 export const normalizeName = (name) =>
   typeof name === "string" ? name.trim().toLowerCase() : "";
@@ -195,4 +307,26 @@ export const mixHex = (hex, backgroundHex, alpha) => {
   const bg = channels(backgroundHex);
   const mixed = fg.map((c, i) => Math.round(c * alpha + bg[i] * (1 - alpha)));
   return `rgb(${mixed.join(", ")})`;
+};
+
+// Returns a readable text color (#212121 or #FFFFFF) for a given background hex.
+export const getContrastText = (hex) => {
+  if (!hex || typeof hex !== "string") {
+    return "#FFFFFF";
+  }
+  let normalized = hex.replace("#", "");
+  if (normalized.length === 3) {
+    normalized = normalized
+      .split("")
+      .map((c) => c + c)
+      .join("");
+  }
+  const r = parseInt(normalized.substring(0, 2), 16) / 255;
+  const g = parseInt(normalized.substring(2, 4), 16) / 255;
+  const b = parseInt(normalized.substring(4, 6), 16) / 255;
+  const toLinear = (c) =>
+    c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  const luminance =
+    0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b);
+  return luminance > 0.55 ? "#212121" : "#FFFFFF";
 };

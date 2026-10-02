@@ -16,10 +16,13 @@ import SearchBar from "../components/SearchBar";
 import ItemCard from "../components/ItemCard";
 import CategoryBlobGrid, { BLOB_HALF_GAP } from "../components/CategoryBlobGrid";
 import EmptyState from "../components/EmptyState";
+import { haptics } from "../utils/haptics";
 import {
   SPACING,
+  daysUntilExpiry,
   getRoomCategories,
   getRoomMeta,
+  isExpiringSoon,
   isInStock,
 } from "../utils/constants";
 
@@ -29,7 +32,7 @@ const GRID_SIDE_PADDING = SPACING.screen - BLOB_HALF_GAP;
 export default function RoomScreen({ navigation, route }) {
   const room = getRoomMeta(route.params && route.params.room);
   const { items, updateItem } = useInventory();
-  const { colors, isDark, toggleTheme } = useTheme();
+  const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { width: windowWidth } = useWindowDimensions();
 
@@ -50,6 +53,23 @@ export default function RoomScreen({ navigation, route }) {
       item.name.toLowerCase().includes(query)
     );
   }, [roomItems, search]);
+
+  // Items that are expired or close to it, soonest first, pinned above the
+  // categories in a blob of their own. They still show in their category too.
+  const expiringGroup = useMemo(() => {
+    const expiring = filteredItems
+      .filter(isExpiringSoon)
+      .sort((a, b) => daysUntilExpiry(a) - daysUntilExpiry(b));
+    if (expiring.length === 0) {
+      return [];
+    }
+    const meta = {
+      label: "Expiring soon",
+      icon: "clock-alert-outline",
+      color: colors.warning,
+    };
+    return [{ meta, items: expiring }];
+  }, [filteredItems, colors.warning]);
 
   const groupedByCategory = useMemo(() => {
     const categories = getRoomCategories(room.key);
@@ -77,9 +97,20 @@ export default function RoomScreen({ navigation, route }) {
   const handleStep = (item, dir) => {
     const result = computeStep(item, dir);
     if (result.changes) {
+      haptics.light();
       updateItem(item.id, result.changes, result.historyEntry);
     }
   };
+
+  const renderCard = (item, cardWidth) => (
+    <ItemCard
+      item={item}
+      width={cardWidth}
+      onPress={() => openDetail(item.id)}
+      onStep={handleStep}
+    />
+  );
+  const gridWidth = windowWidth - GRID_SIDE_PADDING * 2;
 
   const hasAnyItems = roomItems.length > 0;
   const totalFiltered = filteredItems.length;
@@ -104,17 +135,6 @@ export default function RoomScreen({ navigation, route }) {
               name={searchOpen ? "close" : "magnify"}
               size={22}
               color={searchOpen ? colors.accent : colors.textPrimary}
-            />
-          </TouchableOpacity>
-          <TouchableOpacity
-            activeOpacity={0.7}
-            style={styles.iconButton}
-            onPress={toggleTheme}
-          >
-            <MaterialCommunityIcons
-              name={isDark ? "white-balance-sunny" : "weather-night"}
-              size={22}
-              color={colors.textPrimary}
             />
           </TouchableOpacity>
         </View>
@@ -150,18 +170,20 @@ export default function RoomScreen({ navigation, route }) {
                   {totalFiltered === 1 ? "item" : "items"}
                 </Text>
               ) : null}
+              {expiringGroup.length > 0 ? (
+                <View style={styles.grid}>
+                  <CategoryBlobGrid
+                    groups={expiringGroup}
+                    width={gridWidth}
+                    renderItem={renderCard}
+                  />
+                </View>
+              ) : null}
               <View style={styles.grid}>
                 <CategoryBlobGrid
                   groups={groupedByCategory}
-                  width={windowWidth - GRID_SIDE_PADDING * 2}
-                  renderItem={(item, cardWidth) => (
-                    <ItemCard
-                      item={item}
-                      width={cardWidth}
-                      onPress={() => openDetail(item.id)}
-                      onStep={handleStep}
-                    />
-                  )}
+                  width={gridWidth}
+                  renderItem={renderCard}
                 />
               </View>
             </>

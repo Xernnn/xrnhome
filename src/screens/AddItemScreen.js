@@ -16,11 +16,14 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
+import DateTimePicker from "@react-native-community/datetimepicker";
 
 import { useInventory } from "../context/InventoryContext";
 import { useTheme } from "../context/ThemeContext";
 import QuantityControl from "../components/QuantityControl";
 import RoomPicker from "../components/RoomPicker";
+import { persistImage } from "../utils/images";
+import { haptics } from "../utils/haptics";
 import {
   SPACING,
   RADIUS,
@@ -29,14 +32,16 @@ import {
   QUANTITY_UNITS,
   OPENED_STEP,
   categoryExists,
+  formatExpiryDate,
   getCategoryMeta,
+  getContrastText,
   getRoomCategories,
   hexToRgba,
 } from "../utils/constants";
 
 export default function AddItemScreen({ navigation, route }) {
   const { addItem } = useInventory();
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
   const [imageUri, setImageUri] = useState(null);
@@ -55,6 +60,26 @@ export default function AddItemScreen({ navigation, route }) {
   const [note, setNote] = useState("");
   const [nameFocused, setNameFocused] = useState(false);
   const [noteFocused, setNoteFocused] = useState(false);
+  const [expiryEnabled, setExpiryEnabled] = useState(false);
+  const [expiryDate, setExpiryDate] = useState(new Date());
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const onChangeDate = (event, selected) => {
+    if (Platform.OS !== "ios") {
+      setShowDatePicker(false);
+    }
+    if (event.type === "set" && selected) {
+      setExpiryDate(selected);
+    }
+  };
+
+  const toggleExpiry = (value) => {
+    setExpiryEnabled(value);
+    if (value && Platform.OS !== "ios") {
+      setShowDatePicker(true);
+    }
+  };
 
   const pickFromLibrary = async () => {
     try {
@@ -152,22 +177,32 @@ export default function AddItemScreen({ navigation, route }) {
     return true;
   };
 
-  const handleSave = () => {
-    if (!validate()) {
+  const handleSave = async () => {
+    if (!validate() || saving) {
       return;
     }
-    addItem({
-      name: name.trim(),
-      room,
-      category,
-      imageUri,
-      quantity,
-      unit,
-      openedPercent: openedEnabled ? openedPercent : null,
-      recurring,
-      note: note.trim(),
-    });
-    navigation.goBack();
+    setSaving(true);
+    try {
+      const storedImageUri = await persistImage(imageUri);
+      addItem({
+        name: name.trim(),
+        room,
+        category,
+        imageUri: storedImageUri,
+        quantity,
+        unit,
+        openedPercent: openedEnabled ? openedPercent : null,
+        expiryDate: expiryEnabled ? expiryDate.toISOString() : null,
+        recurring,
+        note: note.trim(),
+      });
+      haptics.success();
+      navigation.goBack();
+    } catch (error) {
+      console.error("Failed to save item:", error);
+      Alert.alert("Error", "Something went wrong while saving this item.");
+      setSaving(false);
+    }
   };
 
   const selectedMeta = category ? getCategoryMeta(category) : null;
@@ -268,10 +303,13 @@ export default function AddItemScreen({ navigation, route }) {
             <View style={styles.grid}>
               {getRoomCategories(room).map((cat) => {
                 const active = category === cat.label;
+                const activeText = getContrastText(cat.color);
                 return (
                   <TouchableOpacity
                     key={cat.label}
                     activeOpacity={0.7}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: active }}
                     onPress={() => {
                       setCategory(cat.label);
                       setCategoryOpen(false);
@@ -290,12 +328,12 @@ export default function AddItemScreen({ navigation, route }) {
                     <MaterialCommunityIcons
                       name={cat.icon}
                       size={16}
-                      color={active ? colors.white : cat.color}
+                      color={active ? activeText : cat.color}
                     />
                     <Text
                       style={[
                         styles.categoryChipText,
-                        { color: active ? colors.white : cat.color },
+                        { color: active ? activeText : cat.color },
                       ]}
                     >
                       {cat.label}
@@ -373,6 +411,59 @@ export default function AddItemScreen({ navigation, route }) {
               />
             </View>
           ) : null}
+          {openedEnabled ? (
+            <Text style={styles.openedHint}>
+              The open one is part of the units above. Pressing minus uses 10%
+              of it at a time.
+            </Text>
+          ) : null}
+
+          <View style={styles.toggleRow}>
+            <Text style={styles.sectionTitle}>Expiry date</Text>
+            <Switch
+              value={expiryEnabled}
+              onValueChange={toggleExpiry}
+              trackColor={{ false: colors.border, true: colors.accent }}
+              thumbColor={colors.white}
+            />
+          </View>
+
+          {expiryEnabled ? (
+            <View style={styles.expirySection}>
+              <TouchableOpacity
+                activeOpacity={0.7}
+                style={styles.dateButton}
+                onPress={() => setShowDatePicker(true)}
+                accessibilityRole="button"
+                accessibilityLabel={`Expiry date ${formatExpiryDate(
+                  expiryDate.toISOString()
+                )}. Tap to change.`}
+              >
+                <MaterialCommunityIcons
+                  name="calendar"
+                  size={20}
+                  color={colors.accent}
+                />
+                <Text style={styles.dateButtonText}>
+                  {formatExpiryDate(expiryDate.toISOString())}
+                </Text>
+                <MaterialCommunityIcons
+                  name="chevron-down"
+                  size={20}
+                  color={colors.textSecondary}
+                />
+              </TouchableOpacity>
+              {showDatePicker ? (
+                <DateTimePicker
+                  value={expiryDate}
+                  mode="date"
+                  display={Platform.OS === "ios" ? "inline" : "default"}
+                  onChange={onChangeDate}
+                  themeVariant={isDark ? "dark" : "light"}
+                />
+              ) : null}
+            </View>
+          ) : null}
 
           <View style={styles.toggleRow}>
             <Text style={styles.sectionTitle}>Shopping list</Text>
@@ -406,8 +497,9 @@ export default function AddItemScreen({ navigation, route }) {
         <View style={styles.footer}>
           <TouchableOpacity
             activeOpacity={0.7}
-            style={styles.saveButton}
+            style={[styles.saveButton, saving && styles.saveButtonDisabled]}
             onPress={handleSave}
+            disabled={saving}
           >
             <MaterialCommunityIcons
               name="content-save"
@@ -415,7 +507,9 @@ export default function AddItemScreen({ navigation, route }) {
               color={colors.white}
               style={styles.saveIcon}
             />
-            <Text style={styles.saveButtonText}>Save Item</Text>
+            <Text style={styles.saveButtonText}>
+              {saving ? "Saving..." : "Save Item"}
+            </Text>
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -606,6 +700,32 @@ const createStyles = (colors) =>
       marginTop: SPACING.card,
       ...SHADOW,
     },
+    openedHint: {
+      fontSize: 12,
+      color: colors.textSecondary,
+      marginTop: SPACING.inner,
+      lineHeight: 16,
+    },
+    expirySection: {
+      marginTop: SPACING.inner,
+    },
+    dateButton: {
+      flexDirection: "row",
+      alignItems: "center",
+      backgroundColor: colors.surface,
+      borderRadius: RADIUS.button,
+      borderWidth: 1,
+      borderColor: colors.border,
+      paddingHorizontal: SPACING.card,
+      paddingVertical: 12,
+    },
+    dateButtonText: {
+      flex: 1,
+      fontSize: 16,
+      fontWeight: "600",
+      color: colors.textPrimary,
+      marginLeft: SPACING.inner,
+    },
     footer: {
       padding: SPACING.screen,
       borderTopWidth: StyleSheet.hairlineWidth,
@@ -619,6 +739,9 @@ const createStyles = (colors) =>
       backgroundColor: colors.accent,
       paddingVertical: 15,
       borderRadius: RADIUS.button,
+    },
+    saveButtonDisabled: {
+      opacity: 0.6,
     },
     saveIcon: {
       marginRight: 8,

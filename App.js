@@ -18,6 +18,8 @@ import ShoppingScreen from "./src/screens/ShoppingScreen";
 import AddItemScreen from "./src/screens/AddItemScreen";
 import ItemDetailScreen from "./src/screens/ItemDetailScreen";
 import EditItemScreen from "./src/screens/EditItemScreen";
+import SettingsScreen from "./src/screens/SettingsScreen";
+import UndoToast from "./src/components/UndoToast";
 import { ROOMS } from "./src/utils/constants";
 
 const Stack = createStackNavigator();
@@ -61,6 +63,7 @@ function ShoppingStack() {
 const TAB_ICONS = {
   ...Object.fromEntries(ROOMS.map((room) => [room.label, room.icon])),
   Shopping: "cart-outline",
+  Settings: "cog-outline",
 };
 
 function RootNavigation() {
@@ -111,7 +114,9 @@ function RootNavigation() {
           <Tab.Screen key={room.key} name={room.label} component={component} />
         ))}
         <Tab.Screen name="Shopping" component={ShoppingStack} />
+        <Tab.Screen name="Settings" component={SettingsScreen} />
       </Tab.Navigator>
+      <UndoToast />
     </NavigationContainer>
   );
 }

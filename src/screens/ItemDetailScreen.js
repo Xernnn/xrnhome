@@ -17,11 +17,16 @@ import { useInventory, computeStep } from "../context/InventoryContext";
 import { useTheme } from "../context/ThemeContext";
 import CategoryBadge from "../components/CategoryBadge";
 import EmptyState from "../components/EmptyState";
+import { haptics } from "../utils/haptics";
 import {
   SPACING,
   RADIUS,
   SHADOW,
+  formatExpiryDate,
   getCategoryMeta,
+  getExpiryColor,
+  getExpiryLabel,
+  getExpiryStatus,
   getRoomMeta,
   hexToRgba,
   isTrackingOpened,
@@ -83,10 +88,13 @@ export default function ItemDetailScreen({ navigation, route }) {
   const tracking = isTrackingOpened(item);
   // An empty % item has no open unit to show, but it is still a % item.
   const showOpenUnit = tracking && item.quantity > 0;
+  const expiryStatus = getExpiryStatus(item);
+  const expiryColor = getExpiryColor(expiryStatus, colors);
 
   const handleStep = (dir) => {
     const result = computeStep(item, dir);
     if (result.changes) {
+      haptics.light();
       updateItem(item.id, result.changes, result.historyEntry);
       if (result.willEmpty) {
         navigation.goBack();
@@ -105,6 +113,7 @@ export default function ItemDetailScreen({ navigation, route }) {
     }
     const before = item.quantity;
     const after = before + amount;
+    haptics.success();
     updateItem(
       item.id,
       { quantity: after },
@@ -119,6 +128,7 @@ export default function ItemDetailScreen({ navigation, route }) {
   };
 
   const toggleRecurring = (value) => {
+    haptics.selection();
     updateItem(
       item.id,
       { recurring: value, neverRecommend: value ? false : item.neverRecommend },
@@ -129,13 +139,14 @@ export default function ItemDetailScreen({ navigation, route }) {
   const handleDelete = () => {
     Alert.alert(
       "Delete item",
-      `Are you sure you want to delete "${item.name}"? This cannot be undone.`,
+      `Delete "${item.name}"? You'll get a few seconds to undo.`,
       [
         { text: "Cancel", style: "cancel" },
         {
           text: "Delete",
           style: "destructive",
           onPress: () => {
+            haptics.warning();
             deleteItem(item.id);
             navigation.goBack();
           },
@@ -225,6 +236,35 @@ export default function ItemDetailScreen({ navigation, route }) {
               <Text style={styles.roomBadgeText}>{room.label}</Text>
             </View>
           </View>
+
+          {item.expiryDate ? (
+            <View
+              style={[
+                styles.expiryBanner,
+                { backgroundColor: hexToRgba(expiryColor, 0.14) },
+              ]}
+            >
+              <MaterialCommunityIcons
+                name={
+                  expiryStatus === "expired"
+                    ? "alert-circle"
+                    : expiryStatus === "soon"
+                    ? "clock-alert-outline"
+                    : "calendar-check-outline"
+                }
+                size={20}
+                color={expiryColor}
+              />
+              <View style={styles.expiryTextWrap}>
+                <Text style={[styles.expiryStatusText, { color: expiryColor }]}>
+                  {getExpiryLabel(item)}
+                </Text>
+                <Text style={styles.expiryDateText}>
+                  {formatExpiryDate(item.expiryDate)}
+                </Text>
+              </View>
+            </View>
+          ) : null}
 
           <View
             style={[
@@ -466,6 +506,25 @@ const createStyles = (colors) =>
       fontSize: 13,
       fontWeight: "600",
       color: colors.textSecondary,
+    },
+    expiryBanner: {
+      flexDirection: "row",
+      alignItems: "center",
+      borderRadius: RADIUS.card,
+      padding: SPACING.card,
+      marginBottom: SPACING.card,
+    },
+    expiryTextWrap: {
+      marginLeft: SPACING.card,
+    },
+    expiryStatusText: {
+      fontSize: 15,
+      fontWeight: "700",
+    },
+    expiryDateText: {
+      fontSize: 13,
+      color: colors.textSecondary,
+      marginTop: 2,
     },
     infoCardsRow: {
       flexDirection: "row",

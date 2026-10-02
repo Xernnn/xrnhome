@@ -12,9 +12,11 @@ import {
   SHADOW,
   getCategoryMeta,
   hexToRgba,
+  isExpiringSoon,
   isTrackingOpened,
 } from "../utils/constants";
 import { useTheme } from "../context/ThemeContext";
+import ExpiryPill from "./ExpiryPill";
 
 export default function ItemCard({ item, width, onPress, onStep }) {
   const { colors } = useTheme();
@@ -28,6 +30,8 @@ export default function ItemCard({ item, width, onPress, onStep }) {
 
   const bigValue = tracking ? `${item.openedPercent}%` : `${item.quantity}`;
   const caption = tracking ? `${item.quantity} ${item.unit}` : item.unit;
+  const decreaseLabel = tracking ? "Use 10 percent" : `Use one ${item.unit}`;
+  const increaseLabel = tracking ? "Add 10 percent" : `Add one ${item.unit}`;
 
   const handleStep = (dir) => {
     if (onStep) {
@@ -40,6 +44,8 @@ export default function ItemCard({ item, width, onPress, onStep }) {
       activeOpacity={0.7}
       style={[styles.card, { width }]}
       onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${item.name}, ${item.quantity} ${item.unit}. Open details`}
     >
       <View style={[styles.imageWrap, { height: Math.round(width * 0.8) }]}>
         {hasImage ? (
@@ -68,6 +74,12 @@ export default function ItemCard({ item, width, onPress, onStep }) {
             />
           </View>
         ) : null}
+
+        {isExpiringSoon(item) ? (
+          <View style={styles.expiryBadge}>
+            <ExpiryPill item={item} />
+          </View>
+        ) : null}
       </View>
 
       <Text style={styles.name} numberOfLines={2}>
@@ -80,6 +92,8 @@ export default function ItemCard({ item, width, onPress, onStep }) {
           style={styles.stepButton}
           onPress={() => handleStep(-1)}
           hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+          accessibilityRole="button"
+          accessibilityLabel={decreaseLabel}
         >
           <MaterialCommunityIcons name="minus" size={14} color={colors.accent} />
         </TouchableOpacity>
@@ -108,6 +122,8 @@ export default function ItemCard({ item, width, onPress, onStep }) {
           style={styles.stepButton}
           onPress={() => handleStep(1)}
           hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+          accessibilityRole="button"
+          accessibilityLabel={increaseLabel}
         >
           <MaterialCommunityIcons name="plus" size={14} color={colors.accent} />
         </TouchableOpacity>
@@ -149,6 +165,15 @@ const createStyles = (colors) =>
       backgroundColor: colors.accent,
       alignItems: "center",
       justifyContent: "center",
+      ...SHADOW,
+    },
+    // ExpiryPill's tint is see-through, so it gets a solid backing over photos.
+    expiryBadge: {
+      position: "absolute",
+      top: 6,
+      right: 6,
+      borderRadius: RADIUS.pill,
+      backgroundColor: colors.surface,
       ...SHADOW,
     },
     name: {

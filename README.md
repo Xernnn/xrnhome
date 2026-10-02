@@ -5,15 +5,15 @@ kitchen and bedroom, tap a button when you use some, and let the app tell you wh
 needs restocking.
 
 Everything lives on your device. There is no account, no server, and nothing
-leaves your phone.
+leaves your phone unless you export a backup yourself.
 
-| Kitchen | Shopping | Item detail |
-| :--: | :--: | :--: |
-| ![Kitchen](docs/screenshots/kitchen-light.png) | ![Shopping](docs/screenshots/shopping-light.png) | ![Item detail](docs/screenshots/detail-light.png) |
+| Kitchen | Bedroom | Shopping | Dark mode |
+| :--: | :--: | :--: | :--: |
+| ![Kitchen](docs/screenshots/kitchen-light.png) | ![Bedroom](docs/screenshots/bedroom-light.png) | ![Shopping](docs/screenshots/shopping-light.png) | ![Dark mode](docs/screenshots/kitchen-dark.png) |
 
-| Bedroom | Adding an item | Dark mode |
+| Item detail | Adding an item | Settings |
 | :--: | :--: | :--: |
-| ![Bedroom](docs/screenshots/bedroom-light.png) | ![Adding an item](docs/screenshots/add-light.png) | ![Dark mode](docs/screenshots/kitchen-dark.png) |
+| ![Item detail](docs/screenshots/detail-light.png) | ![Adding an item](docs/screenshots/add-light.png) | ![Settings](docs/screenshots/settings-light.png) |
 
 ## Features
 
@@ -24,15 +24,22 @@ leaves your phone.
   kitchenware.
 - **Count part-used items** — for things like a bottle of oil, track how much of
   the open one is left instead of pretending it is full or empty.
+- **Expiry dates** — give an item an optional expiry date. Anything expired or
+  due within four days is flagged on its card and pinned to the top of its room.
 - **Shopping list** — flag items you always re-buy and they show up under
   "Buy Now" as soon as they run low, whichever room they belong to.
 - **Nothing gets lost** — items you finish move to a "Previously Had" list, so you
-  can put them back on the shopping list or delete them for good.
+  can put them back on the shopping list or delete them for good. Deleting shows
+  an undo button for a few seconds.
 - **Quick to browse** — items sit three to a row. Each category sits on a patch
   of its own color with its name on it, so a row can hold the end of one
   category and the start of the next. Search hides behind a button until you
   need it.
-- **Light and dark** — follows your system theme.
+- **Light and dark** — follows your system theme, or pick one in Settings.
+- **Backup and restore** — export everything to a JSON file from Settings, and
+  import it again on the same phone or a new one.
+- **Photos that stick** — pictures are copied into the app's own storage, so
+  they survive the system clearing its photo picker cache.
 
 ## Requirements
 
@@ -88,15 +95,21 @@ whole unit.
 An item counted in % stays that way. When its last unit runs out it keeps
 counting in %, and the next one you buy starts at 100%.
 
+When an item runs out, its expiry date is cleared too, since the date belonged
+to the stock that is gone. Adding more of something you still have keeps the
+earlier of the two dates.
+
 ## Project structure
 
 ```
 App.js                  navigation, tabs and providers
 src/
-  screens/              room (Kitchen, Bedroom), Shopping, Add, Edit, Item detail
-  components/           item cards, category grid, search bar, pickers, badges
+  screens/              room (Kitchen, Bedroom), Shopping, Settings, Add, Edit,
+                        Item detail
+  components/           item cards, category grid, undo toast, pickers, badges
   context/              inventory state and theme
-  utils/                rooms, categories, units, styling tokens, local storage
+  utils/                rooms, categories, units, expiry, styling tokens,
+                        storage, backups, photos, haptics
 assets/                 app icon and splash image
 ```
 
