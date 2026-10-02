@@ -13,48 +13,55 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { ThemeProvider, useTheme } from "./src/context/ThemeContext";
 import { InventoryProvider } from "./src/context/InventoryContext";
-import HomeScreen from "./src/screens/HomeScreen";
+import RoomScreen from "./src/screens/RoomScreen";
 import ShoppingScreen from "./src/screens/ShoppingScreen";
 import AddItemScreen from "./src/screens/AddItemScreen";
 import ItemDetailScreen from "./src/screens/ItemDetailScreen";
 import EditItemScreen from "./src/screens/EditItemScreen";
+import { ROOMS } from "./src/utils/constants";
 
-const HomeStackNav = createStackNavigator();
-const ShoppingStackNav = createStackNavigator();
+const Stack = createStackNavigator();
 const Tab = createBottomTabNavigator();
 
-function HomeStack() {
+// Every tab is its own stack with the same pushed screens on top of its main one.
+function TabStack({ mainName, mainComponent, mainParams }) {
   return (
-    <HomeStackNav.Navigator screenOptions={{ headerShown: false }}>
-      <HomeStackNav.Screen name="HomeMain" component={HomeScreen} />
-      <HomeStackNav.Screen name="ItemDetail" component={ItemDetailScreen} />
-      <HomeStackNav.Screen name="EditItem" component={EditItemScreen} />
-      <HomeStackNav.Screen
+    <Stack.Navigator screenOptions={{ headerShown: false }}>
+      <Stack.Screen
+        name={mainName}
+        component={mainComponent}
+        initialParams={mainParams}
+      />
+      <Stack.Screen name="ItemDetail" component={ItemDetailScreen} />
+      <Stack.Screen name="EditItem" component={EditItemScreen} />
+      <Stack.Screen
         name="AddItem"
         component={AddItemScreen}
         options={{ presentation: "modal" }}
       />
-    </HomeStackNav.Navigator>
+    </Stack.Navigator>
   );
 }
 
+const ROOM_STACKS = ROOMS.map((room) => ({
+  room,
+  component: () => (
+    <TabStack
+      mainName={`${room.label}Main`}
+      mainComponent={RoomScreen}
+      mainParams={{ room: room.key }}
+    />
+  ),
+}));
+
 function ShoppingStack() {
-  return (
-    <ShoppingStackNav.Navigator screenOptions={{ headerShown: false }}>
-      <ShoppingStackNav.Screen name="ShoppingMain" component={ShoppingScreen} />
-      <ShoppingStackNav.Screen
-        name="ItemDetail"
-        component={ItemDetailScreen}
-      />
-      <ShoppingStackNav.Screen name="EditItem" component={EditItemScreen} />
-      <ShoppingStackNav.Screen
-        name="AddItem"
-        component={AddItemScreen}
-        options={{ presentation: "modal" }}
-      />
-    </ShoppingStackNav.Navigator>
-  );
+  return <TabStack mainName="ShoppingMain" mainComponent={ShoppingScreen} />;
 }
+
+const TAB_ICONS = {
+  ...Object.fromEntries(ROOMS.map((room) => [room.label, room.icon])),
+  Shopping: "cart-outline",
+};
 
 function RootNavigation() {
   const { colors, isDark } = useTheme();
@@ -91,24 +98,18 @@ function RootNavigation() {
             fontSize: 12,
             fontWeight: "600",
           },
-          tabBarIcon: ({ color, size }) => {
-            let iconName = "silverware-fork-knife";
-            if (route.name === "My Kitchen") {
-              iconName = "silverware-fork-knife";
-            } else if (route.name === "Shopping") {
-              iconName = "cart-outline";
-            }
-            return (
-              <MaterialCommunityIcons
-                name={iconName}
-                size={size}
-                color={color}
-              />
-            );
-          },
+          tabBarIcon: ({ color, size }) => (
+            <MaterialCommunityIcons
+              name={TAB_ICONS[route.name]}
+              size={size}
+              color={color}
+            />
+          ),
         })}
       >
-        <Tab.Screen name="My Kitchen" component={HomeStack} />
+        {ROOM_STACKS.map(({ room, component }) => (
+          <Tab.Screen key={room.key} name={room.label} component={component} />
+        ))}
         <Tab.Screen name="Shopping" component={ShoppingStack} />
       </Tab.Navigator>
     </NavigationContainer>

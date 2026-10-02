@@ -20,24 +20,30 @@ import * as ImagePicker from "expo-image-picker";
 import { useInventory } from "../context/InventoryContext";
 import { useTheme } from "../context/ThemeContext";
 import QuantityControl from "../components/QuantityControl";
+import RoomPicker from "../components/RoomPicker";
 import {
   SPACING,
   RADIUS,
   SHADOW,
-  CATEGORIES,
+  DEFAULT_ROOM,
   QUANTITY_UNITS,
   OPENED_STEP,
+  categoryExists,
   getCategoryMeta,
+  getRoomCategories,
   hexToRgba,
 } from "../utils/constants";
 
-export default function AddItemScreen({ navigation }) {
+export default function AddItemScreen({ navigation, route }) {
   const { addItem } = useInventory();
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
   const [imageUri, setImageUri] = useState(null);
   const [name, setName] = useState("");
+  const [room, setRoom] = useState(
+    (route.params && route.params.room) || DEFAULT_ROOM
+  );
   const [category, setCategory] = useState(null);
   const [categoryOpen, setCategoryOpen] = useState(false);
   const [quantity, setQuantity] = useState(1);
@@ -123,6 +129,13 @@ export default function AddItemScreen({ navigation }) {
     }
   };
 
+  const changeRoom = (nextRoom) => {
+    setRoom(nextRoom);
+    if (category && !categoryExists(category, nextRoom)) {
+      setCategory(null);
+    }
+  };
+
   const validate = () => {
     if (!name.trim()) {
       Alert.alert("Missing name", "Please enter an item name.");
@@ -145,6 +158,7 @@ export default function AddItemScreen({ navigation }) {
     }
     addItem({
       name: name.trim(),
+      room,
       category,
       imageUri,
       quantity,
@@ -222,6 +236,9 @@ export default function AddItemScreen({ navigation }) {
             onBlur={() => setNameFocused(false)}
           />
 
+          <Text style={styles.label}>Room</Text>
+          <RoomPicker value={room} onChange={changeRoom} />
+
           <Text style={styles.label}>Category</Text>
           <TouchableOpacity
             activeOpacity={0.7}
@@ -249,7 +266,7 @@ export default function AddItemScreen({ navigation }) {
 
           {categoryOpen ? (
             <View style={styles.grid}>
-              {CATEGORIES.map((cat) => {
+              {getRoomCategories(room).map((cat) => {
                 const active = category === cat.label;
                 return (
                   <TouchableOpacity
@@ -335,7 +352,7 @@ export default function AddItemScreen({ navigation }) {
           ) : null}
 
           <View style={styles.toggleRow}>
-            <Text style={styles.sectionTitle}>Partially used</Text>
+            <Text style={styles.sectionTitle}>Track in %</Text>
             <Switch
               value={openedEnabled}
               onValueChange={setOpenedEnabled}

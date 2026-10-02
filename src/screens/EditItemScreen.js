@@ -20,15 +20,18 @@ import * as ImagePicker from "expo-image-picker";
 import { useInventory } from "../context/InventoryContext";
 import { useTheme } from "../context/ThemeContext";
 import QuantityControl from "../components/QuantityControl";
+import RoomPicker from "../components/RoomPicker";
 import EmptyState from "../components/EmptyState";
 import {
   SPACING,
   RADIUS,
   SHADOW,
-  CATEGORIES,
+  DEFAULT_ROOM,
   QUANTITY_UNITS,
   OPENED_STEP,
+  categoryExists,
   getCategoryMeta,
+  getRoomCategories,
   hexToRgba,
   isTrackingOpened,
 } from "../utils/constants";
@@ -42,6 +45,7 @@ export default function EditItemScreen({ navigation, route }) {
 
   const [imageUri, setImageUri] = useState(existing ? existing.imageUri : null);
   const [name, setName] = useState(existing ? existing.name : "");
+  const [room, setRoom] = useState(existing ? existing.room : DEFAULT_ROOM);
   const [category, setCategory] = useState(existing ? existing.category : null);
   const [categoryOpen, setCategoryOpen] = useState(false);
   const [quantity, setQuantity] = useState(existing ? existing.quantity : 1);
@@ -174,6 +178,13 @@ export default function EditItemScreen({ navigation, route }) {
     }
   };
 
+  const changeRoom = (nextRoom) => {
+    setRoom(nextRoom);
+    if (category && !categoryExists(category, nextRoom)) {
+      setCategory(null);
+    }
+  };
+
   const validate = () => {
     if (!name.trim()) {
       Alert.alert("Missing name", "Please enter an item name.");
@@ -198,6 +209,7 @@ export default function EditItemScreen({ navigation, route }) {
       itemId,
       {
         name: name.trim(),
+        room,
         category,
         imageUri,
         quantity,
@@ -282,6 +294,9 @@ export default function EditItemScreen({ navigation, route }) {
             onBlur={() => setNameFocused(false)}
           />
 
+          <Text style={styles.label}>Room</Text>
+          <RoomPicker value={room} onChange={changeRoom} />
+
           <Text style={styles.label}>Category</Text>
           <TouchableOpacity
             activeOpacity={0.7}
@@ -309,7 +324,7 @@ export default function EditItemScreen({ navigation, route }) {
 
           {categoryOpen ? (
             <View style={styles.grid}>
-              {CATEGORIES.map((cat) => {
+              {getRoomCategories(room).map((cat) => {
                 const active = category === cat.label;
                 return (
                   <TouchableOpacity
@@ -395,7 +410,7 @@ export default function EditItemScreen({ navigation, route }) {
           ) : null}
 
           <View style={styles.toggleRow}>
-            <Text style={styles.sectionTitle}>Partially used</Text>
+            <Text style={styles.sectionTitle}>Track in %</Text>
             <Switch
               value={openedEnabled}
               onValueChange={setOpenedEnabled}

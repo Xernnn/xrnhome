@@ -48,21 +48,55 @@ export const SPACING = {
   inner: 8,
 };
 
+export const ROOMS = [
+  {
+    key: "kitchen",
+    label: "Kitchen",
+    icon: "silverware-fork-knife",
+    emptyIcon: "fridge-outline",
+  },
+  {
+    key: "bedroom",
+    label: "Bedroom",
+    icon: "bed-outline",
+    emptyIcon: "bed-empty",
+  },
+];
+
+export const DEFAULT_ROOM = ROOMS[0].key;
+
+export const getRoomMeta = (key) =>
+  ROOMS.find((r) => r.key === key) || ROOMS[0];
+
+export const roomExists = (key) => ROOMS.some((r) => r.key === key);
+
+// `room: null` marks a category offered in every room. Keep "Other" last: it is
+// the fallback for unknown labels.
 export const CATEGORIES = [
-  { label: "Vegetables", icon: "carrot", color: "#4CAF50" },
-  { label: "Fruits", icon: "food-apple", color: "#FF9800" },
-  { label: "Meat & Seafood", icon: "food-steak", color: "#F44336" },
-  { label: "Dairy", icon: "cheese", color: "#FFD54F" },
-  { label: "Bakery", icon: "bread-slice", color: "#D7A86E" },
-  { label: "Drinks", icon: "cup", color: "#29B6F6" },
-  { label: "Frozen", icon: "snowflake", color: "#80DEEA" },
-  { label: "Canned Foods", icon: "food-variant", color: "#78909C" },
-  { label: "Condiments", icon: "bottle-soda", color: "#9C27B0" },
-  { label: "Spices & Herbs", icon: "shaker", color: "#FF7043" },
-  { label: "Grains & Pasta", icon: "grain", color: "#A1887F" },
-  { label: "Snacks", icon: "cookie", color: "#FFCA28" },
-  { label: "Food Cupboard", icon: "cupboard", color: "#8D6E63" },
-  { label: "Other", icon: "dots-horizontal", color: "#BDBDBD" },
+  { label: "Vegetables", icon: "carrot", color: "#4CAF50", room: "kitchen" },
+  { label: "Fruits", icon: "food-apple", color: "#FF9800", room: "kitchen" },
+  { label: "Meat & Seafood", icon: "food-steak", color: "#F44336", room: "kitchen" },
+  { label: "Dairy", icon: "cheese", color: "#FFD54F", room: "kitchen" },
+  { label: "Bakery", icon: "bread-slice", color: "#D7A86E", room: "kitchen" },
+  { label: "Drinks", icon: "cup", color: "#29B6F6", room: "kitchen" },
+  { label: "Frozen", icon: "snowflake", color: "#80DEEA", room: "kitchen" },
+  { label: "Canned Foods", icon: "food-variant", color: "#78909C", room: "kitchen" },
+  { label: "Condiments", icon: "bottle-soda", color: "#9C27B0", room: "kitchen" },
+  { label: "Spices & Herbs", icon: "shaker", color: "#FF7043", room: "kitchen" },
+  { label: "Grains & Pasta", icon: "grain", color: "#A1887F", room: "kitchen" },
+  { label: "Snacks", icon: "cookie", color: "#FFCA28", room: "kitchen" },
+  { label: "Food Cupboard", icon: "cupboard", color: "#8D6E63", room: "kitchen" },
+  { label: "Cleaning", icon: "spray-bottle", color: "#26A69A", room: "kitchen" },
+  { label: "Paper & Wraps", icon: "paper-roll", color: "#F06292", room: "kitchen" },
+  { label: "Kitchenware", icon: "pot-mix", color: "#5C6BC0", room: "kitchen" },
+  { label: "Clothing", icon: "tshirt-crew", color: "#5C6BC0", room: "bedroom" },
+  { label: "Bedding", icon: "bed", color: "#7E57C2", room: "bedroom" },
+  { label: "Toiletries", icon: "toothbrush-paste", color: "#29B6F6", room: "bedroom" },
+  { label: "Beauty", icon: "lipstick", color: "#EC407A", room: "bedroom" },
+  { label: "Medicine", icon: "pill", color: "#EF5350", room: "bedroom" },
+  { label: "Electronics", icon: "power-plug", color: "#78909C", room: "bedroom" },
+  { label: "Stationery", icon: "book-open-variant", color: "#A1887F", room: "bedroom" },
+  { label: "Other", icon: "dots-horizontal", color: "#BDBDBD", room: null },
 ];
 
 export const QUANTITY_UNITS = [
@@ -75,6 +109,8 @@ export const QUANTITY_UNITS = [
   "packs",
   "rolls",
   "bunches",
+  "tubes",
+  "pairs",
 ];
 
 export const MAX_HISTORY_ENTRIES = 20;
@@ -84,8 +120,11 @@ export const ALMOST_OUT_PERCENT = 20;
 export const getCategoryMeta = (label) =>
   CATEGORIES.find((c) => c.label === label) || CATEGORIES[CATEGORIES.length - 1];
 
-export const categoryExists = (label) =>
-  CATEGORIES.some((c) => c.label === label);
+export const getRoomCategories = (room) =>
+  CATEGORIES.filter((c) => c.room === room || c.room === null);
+
+export const categoryExists = (label, room) =>
+  getRoomCategories(room).some((c) => c.label === label);
 
 export const isTrackingOpened = (item) =>
   item &&
@@ -107,8 +146,8 @@ export const isAlmostOut = (item) => {
   return false;
 };
 
-// Items with stock show in My Kitchen.
-export const isInKitchen = (item) => !!item && item.quantity > 0;
+// Items with stock show on their room's tab.
+export const isInStock = (item) => !!item && item.quantity > 0;
 
 // Ran out and not on the shopping list — shown under Previously Had.
 // Every out-of-stock item lands either here or in Buy Now, so nothing is
@@ -116,9 +155,12 @@ export const isInKitchen = (item) => !!item && item.quantity > 0;
 export const isPreviouslyHad = (item) =>
   !!item && item.quantity <= 0 && !item.recurring;
 
-// Key used to decide whether two entries describe the same item.
 export const normalizeName = (name) =>
   typeof name === "string" ? name.trim().toLowerCase() : "";
+
+// Key used to decide whether two entries describe the same item. The same name
+// in two rooms is two different things (tissues by the bed and in the kitchen).
+export const itemKey = (item) => `${item.room}:${normalizeName(item.name)}`;
 
 export const hexToRgba = (hex, alpha) => {
   if (!hex || typeof hex !== "string") {
@@ -135,4 +177,22 @@ export const hexToRgba = (hex, alpha) => {
   const g = parseInt(normalized.substring(2, 4), 16);
   const b = parseInt(normalized.substring(4, 6), 16);
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+};
+
+// Opaque equivalent of drawing `hex` at `alpha` over `backgroundHex`.
+export const mixHex = (hex, backgroundHex, alpha) => {
+  const channels = (value) => {
+    let normalized = value.replace("#", "");
+    if (normalized.length === 3) {
+      normalized = normalized
+        .split("")
+        .map((c) => c + c)
+        .join("");
+    }
+    return [0, 2, 4].map((i) => parseInt(normalized.substring(i, i + 2), 16));
+  };
+  const fg = channels(hex);
+  const bg = channels(backgroundHex);
+  const mixed = fg.map((c, i) => Math.round(c * alpha + bg[i] * (1 - alpha)));
+  return `rgb(${mixed.join(", ")})`;
 };

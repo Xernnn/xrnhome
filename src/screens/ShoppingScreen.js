@@ -19,6 +19,7 @@ import {
   RADIUS,
   SHADOW,
   getCategoryMeta,
+  getRoomMeta,
   hexToRgba,
   isTrackingOpened,
   isAlmostOut,
@@ -43,15 +44,18 @@ export default function ShoppingScreen({ navigation }) {
 
   const openDetail = (id) => navigation.navigate("ItemDetail", { itemId: id });
 
-  const statusText = (item) => {
+  const stockText = (item) => {
     if (item.quantity <= 0) {
-      return "Out of stock";
+      return "out of stock";
     }
     if (item.quantity === 1 && isTrackingOpened(item)) {
-      return `${item.openedPercent}% of the last unit left`;
+      return `last unit at ${item.openedPercent}%`;
     }
     return `${item.quantity} ${item.unit} left`;
   };
+
+  const statusText = (item) =>
+    `${getRoomMeta(item.room).label} · ${stockText(item)}`;
 
   const markBought = (item) => {
     const q = Math.max(0, item.quantity) + 1;
@@ -201,7 +205,7 @@ export default function ShoppingScreen({ navigation }) {
               {item.name}
             </Text>
             <Text style={styles.rowStatus} numberOfLines={1}>
-              Ran out
+              {getRoomMeta(item.room).label} · ran out
             </Text>
           </View>
         </TouchableOpacity>
@@ -282,7 +286,7 @@ export default function ShoppingScreen({ navigation }) {
               size={20}
               color={colors.textSecondary}
             />
-            <Text style={styles.sectionTitle}>Saved Foods</Text>
+            <Text style={styles.sectionTitle}>Saved Items</Text>
             <View style={styles.sectionCount}>
               <Text style={styles.sectionCountText}>{saved.length}</Text>
             </View>

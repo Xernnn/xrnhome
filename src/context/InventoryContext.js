@@ -15,12 +15,14 @@ import {
   CURRENT_SCHEMA_VERSION,
 } from "../utils/storage";
 import {
+  DEFAULT_ROOM,
   MAX_HISTORY_ENTRIES,
   OPENED_STEP,
   QUANTITY_UNITS,
   categoryExists,
   isTrackingOpened,
-  normalizeName,
+  itemKey,
+  roomExists,
 } from "../utils/constants";
 import { useTheme } from "./ThemeContext";
 
@@ -53,6 +55,22 @@ const capHistory = (history) => {
 
 const clampPercent = (value) => Math.max(0, Math.min(100, value));
 
+// A % item stays a % item when it runs out. While it is empty its open unit
+// reads 100%, so whatever gets bought next starts out full.
+const settleOpened = (item) =>
+  item.quantity <= 0 && isTrackingOpened(item)
+    ? { ...item, openedPercent: 100 }
+    : item;
+
+// When two records of one item merge, the open unit comes from whichever of
+// them still has stock.
+const mergedOpenedPercent = (a, b) => {
+  if (isTrackingOpened(a) && a.quantity > 0) {
+    return a.openedPercent;
+  }
+  return isTrackingOpened(b) ? b.openedPercent : a.openedPercent;
+};
+
 /**
  * Normalizes any stored item (including legacy shapes) into the current model.
  * When migrateToV2 is set, quantity is rewritten from "sealed only" to a total
@@ -84,11 +102,13 @@ const normalizeItem = (raw, migrateToV2) => {
   }
 
   const now = new Date().toISOString();
+  const room = roomExists(raw.room) ? raw.room : DEFAULT_ROOM;
 
-  return {
+  return settleOpened({
     id: raw.id || generateId(),
     name: typeof raw.name === "string" ? raw.name : "Untitled item",
-    category: categoryExists(raw.category) ? raw.category : "Other",
+    room,
+    category: categoryExists(raw.category, room) ? raw.category : "Other",
     imageUri: raw.imageUri ?? null,
     quantity: Math.max(0, quantity),
     unit: typeof raw.unit === "string" && raw.unit ? raw.unit : QUANTITY_UNITS[0],
@@ -99,20 +119,20 @@ const normalizeItem = (raw, migrateToV2) => {
     createdAt: raw.createdAt || now,
     updatedAt: raw.updatedAt || now,
     history: Array.isArray(raw.history) ? raw.history : [],
-  };
+  });
 };
 
 const byDate = (a, b) => String(a.date).localeCompare(String(b.date));
 
 // Folds entries that describe the same item into a single record.
 const mergeDuplicates = (items) => {
-  const byName = new Map();
+  const byKey = new Map();
 
   items.forEach((item) => {
-    const key = normalizeName(item.name);
-    const seen = byName.get(key);
+    const key = itemKey(item);
+    const seen = byKey.get(key);
     if (!seen) {
-      byName.set(key, item);
+      byKey.set(key, item);
       return;
     }
 
@@ -121,11 +141,10 @@ const mergeDuplicates = (items) => {
         ? [seen, item]
         : [item, seen];
 
-    byName.set(key, {
+    byKey.set(key, {
       ...keep,
       quantity: (keep.quantity || 0) + (drop.quantity || 0),
-      openedPercent:
-        keep.openedPercent !== null ? keep.openedPercent : drop.openedPercent,
+      openedPercent: mergedOpenedPercent(keep, drop),
       imageUri: keep.imageUri || drop.imageUri,
       note: keep.note || drop.note,
       recurring: keep.recurring || drop.recurring,
@@ -136,7 +155,7 @@ const mergeDuplicates = (items) => {
     });
   });
 
-  return Array.from(byName.values());
+  return Array.from(byKey.values());
 };
 
 /**
@@ -153,7 +172,7 @@ export function computeStep(item, dir) {
   const tracking = isTrackingOpened(item);
 
   if (dir > 0) {
-    if (tracking && item.openedPercent < 100) {
+    if (tracking && item.quantity > 0 && item.openedPercent < 100) {
       const next = clampPercent(item.openedPercent + OPENED_STEP);
       return {
         changes: { openedPercent: next },
@@ -178,6 +197,10 @@ export function computeStep(item, dir) {
     };
   }
 
+  if (item.quantity <= 0) {
+    return noop;
+  }
+
   if (tracking) {
     const nextPercent = item.openedPercent - OPENED_STEP;
     if (nextPercent > 0) {
@@ -192,32 +215,21 @@ export function computeStep(item, dir) {
       };
     }
 
-    // The open unit is spent, so it leaves the count.
-    const q = Math.max(0, item.quantity - 1);
-    if (q >= 1) {
-      return {
-        changes: { quantity: q, openedPercent: 100 },
-        historyEntry: {
-          action: `Finished a unit, opened the next (${q} left)`,
-          quantityBefore: item.quantity,
-          quantityAfter: q,
-        },
-        willEmpty: false,
-      };
-    }
+    // The open unit is spent, so it leaves the count. The item keeps counting
+    // in % even when that was the last unit.
+    const q = item.quantity - 1;
     return {
-      changes: { quantity: 0, openedPercent: null },
+      changes: { quantity: q, openedPercent: 100 },
       historyEntry: {
-        action: "Used the last unit",
+        action:
+          q === 0
+            ? "Used the last unit"
+            : `Finished a unit, opened the next (${q} left)`,
         quantityBefore: item.quantity,
-        quantityAfter: 0,
+        quantityAfter: q,
       },
-      willEmpty: true,
+      willEmpty: q === 0,
     };
-  }
-
-  if (item.quantity <= 0) {
-    return noop;
   }
 
   const q = item.quantity - 1;
@@ -239,30 +251,25 @@ function reducer(state, action) {
 
     case ACTIONS.ADD_ITEM: {
       const { candidate, now } = action.payload;
-      const key = normalizeName(candidate.name);
-      const index = state.items.findIndex(
-        (item) => normalizeName(item.name) === key
-      );
+      const key = itemKey(candidate);
+      const index = state.items.findIndex((item) => itemKey(item) === key);
 
       if (index === -1) {
-        return { ...state, items: [candidate, ...state.items] };
+        return { ...state, items: [settleOpened(candidate), ...state.items] };
       }
 
       // Same item already tracked, so top it up instead of adding a second card.
       const existing = state.items[index];
       const quantity = (existing.quantity || 0) + (candidate.quantity || 0);
       const items = [...state.items];
-      items[index] = {
+      items[index] = settleOpened({
         ...existing,
         quantity,
         imageUri: existing.imageUri || candidate.imageUri,
         note: candidate.note || existing.note,
         recurring: candidate.recurring || existing.recurring,
         neverRecommend: candidate.recurring ? false : existing.neverRecommend,
-        openedPercent:
-          existing.openedPercent !== null
-            ? existing.openedPercent
-            : candidate.openedPercent,
+        openedPercent: mergedOpenedPercent(existing, candidate),
         updatedAt: now,
         history: capHistory([
           ...(existing.history || []),
@@ -273,7 +280,7 @@ function reducer(state, action) {
             quantityAfter: quantity,
           },
         ]),
-      };
+      });
       return { ...state, items };
     }
 
@@ -300,14 +307,14 @@ function reducer(state, action) {
       }
 
       const items = [...state.items];
-      items[index] = {
+      items[index] = settleOpened({
         ...existing,
         ...changes,
         id: existing.id,
         createdAt: existing.createdAt,
         updatedAt: now,
         history: capHistory(history),
-      };
+      });
       return { ...state, items };
     }
 
@@ -372,10 +379,15 @@ export function InventoryProvider({ children }) {
         ? null
         : clampPercent(Number(itemData.openedPercent));
 
+    const room = roomExists(itemData.room) ? itemData.room : DEFAULT_ROOM;
+
     const candidate = {
       id: generateId(),
       name: itemData.name,
-      category: categoryExists(itemData.category) ? itemData.category : "Other",
+      room,
+      category: categoryExists(itemData.category, room)
+        ? itemData.category
+        : "Other",
       imageUri: itemData.imageUri ?? null,
       quantity,
       unit: itemData.unit || QUANTITY_UNITS[0],
