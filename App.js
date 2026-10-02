@@ -9,7 +9,10 @@ import {
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { createStackNavigator } from "@react-navigation/stack";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { SafeAreaProvider } from "react-native-safe-area-context";
+import {
+  SafeAreaProvider,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 
 import { ThemeProvider, useTheme } from "./src/context/ThemeContext";
 import { InventoryProvider } from "./src/context/InventoryContext";
@@ -45,15 +48,22 @@ function TabStack({ mainName, mainComponent, mainParams }) {
   );
 }
 
+// A named function per room, created once. React Navigation warns about screen
+// components whose function is called "component", as an object key would make it.
+const makeRoomStack = (room) =>
+  function RoomStack() {
+    return (
+      <TabStack
+        mainName={`${room.label}Main`}
+        mainComponent={RoomScreen}
+        mainParams={{ room: room.key }}
+      />
+    );
+  };
+
 const ROOM_STACKS = ROOMS.map((room) => ({
   room,
-  component: () => (
-    <TabStack
-      mainName={`${room.label}Main`}
-      mainComponent={RoomScreen}
-      mainParams={{ room: room.key }}
-    />
-  ),
+  component: makeRoomStack(room),
 }));
 
 function ShoppingStack() {
@@ -68,6 +78,9 @@ const TAB_ICONS = {
 
 function RootNavigation() {
   const { colors, isDark } = useTheme();
+  // A fixed tab bar height overrides React Navigation's own inset handling, so
+  // the system navigation bar's height has to be added back by hand.
+  const { bottom } = useSafeAreaInsets();
 
   const navTheme = {
     ...(isDark ? DarkTheme : DefaultTheme),
@@ -93,8 +106,8 @@ function RootNavigation() {
           tabBarStyle: {
             backgroundColor: colors.tabBar,
             borderTopColor: colors.border,
-            height: 60,
-            paddingBottom: 8,
+            height: 60 + bottom,
+            paddingBottom: 8 + bottom,
             paddingTop: 6,
           },
           tabBarLabelStyle: {
