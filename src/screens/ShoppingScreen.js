@@ -1,7 +1,8 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import {
   View,
   Text,
+  TextInput,
   Image,
   ScrollView,
   TouchableOpacity,
@@ -13,9 +14,9 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 
 import { useInventory } from "../context/InventoryContext";
 import { useTheme } from "../context/ThemeContext";
-import EmptyState from "../components/EmptyState";
 import { haptics } from "../utils/haptics";
 import {
+  DEFAULT_ROOM,
   SPACING,
   RADIUS,
   SHADOW,
@@ -23,25 +24,35 @@ import {
   getRoomMeta,
   hexToRgba,
   isTrackingOpened,
-  isAlmostOut,
+  isOnBuyList,
   isPreviouslyHad,
+  isStillStocked,
+  normalizeName,
 } from "../utils/constants";
 
 export default function ShoppingScreen({ navigation }) {
-  const { items, updateItem, deleteItem } = useInventory();
+  const { items, addItem, updateItem, deleteItem } = useInventory();
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
-  const { buyNow, saved, previouslyHad } = useMemo(() => {
-    const active = items.filter(
-      (item) => item.recurring && !item.neverRecommend
-    );
-    return {
-      buyNow: active.filter((item) => isAlmostOut(item)),
-      saved: active.filter((item) => !isAlmostOut(item)),
-      previouslyHad: items.filter(isPreviouslyHad),
-    };
-  }, [items]);
+  const [newName, setNewName] = useState("");
+  // Items ticked off this trip: id -> { count, before }. They stay on screen,
+  // ticked, so a wrong tap can be undone and more can be added. Lives only as
+  // long as the tab does.
+  const [inCart, setInCart] = useState({});
+  const [open, setOpen] = useState({ stocked: false, ranOut: false });
+
+  const { toBuy, cart, stocked, ranOut } = useMemo(
+    () => ({
+      toBuy: items.filter((item) => isOnBuyList(item) && !inCart[item.id]),
+      cart: items.filter((item) => inCart[item.id]),
+      stocked: items.filter(
+        (item) => isStillStocked(item) && !inCart[item.id]
+      ),
+      ranOut: items.filter((item) => isPreviouslyHad(item)),
+    }),
+    [items, inCart]
+  );
 
   const openDetail = (id) => navigation.navigate("ItemDetail", { itemId: id });
 
@@ -50,17 +61,53 @@ export default function ShoppingScreen({ navigation }) {
       return "out of stock";
     }
     if (item.quantity === 1 && isTrackingOpened(item)) {
-      return `last unit at ${item.openedPercent}%`;
+      return `last one at ${item.openedPercent}%`;
     }
     return `${item.quantity} ${item.unit} left`;
   };
 
-  const statusText = (item) =>
-    `${getRoomMeta(item.room).label} · ${stockText(item)}`;
+  const addToList = () => {
+    const name = newName.trim();
+    if (!name) {
+      return;
+    }
+    const key = normalizeName(name);
+    const existing = items.find((item) => normalizeName(item.name) === key);
+    if (existing) {
+      if (!isOnBuyList(existing)) {
+        updateItem(
+          existing.id,
+          { wanted: true },
+          { action: "Added to the shopping list" }
+        );
+      }
+    } else {
+      addItem({
+        name,
+        room: DEFAULT_ROOM,
+        category: "Other",
+        quantity: 0,
+        wanted: true,
+      });
+    }
+    haptics.light();
+    setNewName("");
+  };
 
-  const markBought = (item) => {
-    const q = Math.max(0, item.quantity) + 1;
+  const tick = (item) => {
+    const q = item.quantity + 1;
     haptics.success();
+    setInCart((prev) => ({
+      ...prev,
+      [item.id]: {
+        count: 1,
+        before: {
+          quantity: item.quantity,
+          openedPercent: item.openedPercent,
+          wanted: !!item.wanted,
+        },
+      },
+    }));
     updateItem(
       item.id,
       { quantity: q },
@@ -72,27 +119,66 @@ export default function ShoppingScreen({ navigation }) {
     );
   };
 
-  const neverRecommend = (item) => {
-    Alert.alert("Remove from shopping list?", `"${item.name}"`, [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Remove",
-        style: "destructive",
-        onPress: () =>
-          updateItem(
-            item.id,
-            { recurring: false, neverRecommend: true },
-            { action: "Removed from shopping list" }
-          ),
-      },
-    ]);
+  // Puts the item back exactly as it was before it was ticked.
+  const untick = (item) => {
+    const entry = inCart[item.id];
+    haptics.light();
+    setInCart((prev) => {
+      const next = { ...prev };
+      delete next[item.id];
+      return next;
+    });
+    if (entry) {
+      updateItem(item.id, entry.before, {
+        action: "Unticked on the shopping list",
+        quantityBefore: item.quantity,
+        quantityAfter: entry.before.quantity,
+      });
+    }
   };
 
-  const addToShoppingList = (item) => {
+  const changeCount = (item, delta) => {
+    const entry = inCart[item.id];
+    if (!entry) {
+      return;
+    }
+    const count = entry.count + delta;
+    if (count <= 0) {
+      untick(item);
+      return;
+    }
+    haptics.selection();
+    const q = entry.before.quantity + count;
+    setInCart((prev) => ({ ...prev, [item.id]: { ...entry, count } }));
     updateItem(
       item.id,
-      { recurring: true, neverRecommend: false },
-      { action: "Added to shopping list" }
+      { quantity: q },
+      {
+        action:
+          delta > 0
+            ? `Bought 1 more ${item.unit} (${q} in stock)`
+            : `Put 1 ${item.unit} back (${q} in stock)`,
+        quantityBefore: item.quantity,
+        quantityAfter: q,
+      }
+    );
+  };
+
+  const removeFromList = (item) => {
+    haptics.light();
+    updateItem(
+      item.id,
+      { recurring: false, neverRecommend: true, wanted: false },
+      { action: "Removed from the shopping list" }
+    );
+  };
+
+  const needIt = (item) => {
+    haptics.light();
+    updateItem(
+      item.id,
+      { wanted: true },
+      { action: "Added to the shopping list" }
     );
   };
 
@@ -114,134 +200,138 @@ export default function ShoppingScreen({ navigation }) {
     );
   };
 
-  const renderRow = (item, { showBought }) => {
+  const renderThumb = (item) => {
     const meta = getCategoryMeta(item.category);
-    return (
-      <TouchableOpacity
-        key={item.id}
-        activeOpacity={0.7}
-        style={styles.row}
-        onPress={() => openDetail(item.id)}
+    return item.imageUri ? (
+      <Image source={{ uri: item.imageUri }} style={styles.thumb} />
+    ) : (
+      <View
+        style={[
+          styles.thumb,
+          styles.thumbPlaceholder,
+          { backgroundColor: hexToRgba(meta.color, 0.18) },
+        ]}
       >
-        {item.imageUri ? (
-          <Image source={{ uri: item.imageUri }} style={styles.thumb} />
-        ) : (
-          <View
-            style={[
-              styles.thumb,
-              styles.thumbPlaceholder,
-              { backgroundColor: hexToRgba(meta.color, 0.18) },
-            ]}
-          >
-            <MaterialCommunityIcons
-              name={meta.icon}
-              size={24}
-              color={meta.color}
-            />
-          </View>
-        )}
-
-        <View style={styles.rowInfo}>
-          <Text style={styles.rowName} numberOfLines={1}>
-            {item.name}
-          </Text>
-          <Text style={styles.rowStatus} numberOfLines={1}>
-            {statusText(item)}
-          </Text>
-        </View>
-
-        <View style={styles.rowActions}>
-          {showBought ? (
-            <TouchableOpacity
-              activeOpacity={0.7}
-              style={styles.boughtButton}
-              onPress={() => markBought(item)}
-              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-            >
-              <MaterialCommunityIcons
-                name="cart-check"
-                size={18}
-                color={colors.white}
-              />
-            </TouchableOpacity>
-          ) : null}
-          <TouchableOpacity
-            activeOpacity={0.7}
-            style={styles.blockButton}
-            onPress={() => neverRecommend(item)}
-            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-          >
-            <MaterialCommunityIcons
-              name="cart-off"
-              size={18}
-              color={colors.danger}
-            />
-          </TouchableOpacity>
-        </View>
-      </TouchableOpacity>
+        <MaterialCommunityIcons name={meta.icon} size={22} color={meta.color} />
+      </View>
     );
   };
 
-  const renderPreviouslyHadRow = (item) => {
-    const meta = getCategoryMeta(item.category);
-    return (
-      <View key={item.id} style={styles.row}>
-        <TouchableOpacity
-          activeOpacity={0.7}
-          style={styles.rowMain}
-          onPress={() => openDetail(item.id)}
+  const renderInfo = (item, status, done = false) => (
+    <TouchableOpacity
+      activeOpacity={0.7}
+      style={styles.rowMain}
+      onPress={() => openDetail(item.id)}
+    >
+      {renderThumb(item)}
+      <View style={styles.rowInfo}>
+        <Text
+          style={[styles.rowName, done && styles.rowNameDone]}
+          numberOfLines={1}
         >
-          {item.imageUri ? (
-            <Image source={{ uri: item.imageUri }} style={styles.thumb} />
-          ) : (
-            <View
-              style={[
-                styles.thumb,
-                styles.thumbPlaceholder,
-                { backgroundColor: hexToRgba(meta.color, 0.18) },
-              ]}
-            >
-              <MaterialCommunityIcons
-                name={meta.icon}
-                size={24}
-                color={meta.color}
-              />
-            </View>
-          )}
+          {item.name}
+        </Text>
+        <Text style={styles.rowStatus} numberOfLines={1}>
+          {getRoomMeta(item.room).label} · {status}
+        </Text>
+      </View>
+    </TouchableOpacity>
+  );
 
-          <View style={styles.rowInfo}>
-            <Text style={styles.rowName} numberOfLines={1}>
-              {item.name}
-            </Text>
-            <Text style={styles.rowStatus} numberOfLines={1}>
-              {getRoomMeta(item.room).label} · ran out
-            </Text>
-          </View>
-        </TouchableOpacity>
+  const renderCheckbox = (item, checked) => (
+    <TouchableOpacity
+      activeOpacity={0.7}
+      style={[styles.checkbox, checked && styles.checkboxChecked]}
+      onPress={() => (checked ? untick(item) : tick(item))}
+      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+      accessibilityRole="checkbox"
+      accessibilityState={{ checked }}
+      accessibilityLabel={
+        checked ? `Untick ${item.name}` : `Bought ${item.name}`
+      }
+    >
+      {checked ? (
+        <MaterialCommunityIcons name="check" size={20} color={colors.white} />
+      ) : null}
+    </TouchableOpacity>
+  );
 
-        <View style={styles.rowActions}>
+  const renderTextButton = (label, onPress, tone = "neutral") => (
+    <TouchableOpacity
+      activeOpacity={0.7}
+      style={[
+        styles.textButton,
+        tone === "accent" && styles.textButtonAccent,
+        tone === "danger" && styles.textButtonDanger,
+      ]}
+      onPress={onPress}
+      hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
+    >
+      <Text
+        style={[
+          styles.textButtonLabel,
+          tone === "accent" && styles.textButtonLabelAccent,
+          tone === "danger" && styles.textButtonLabelDanger,
+        ]}
+      >
+        {label}
+      </Text>
+    </TouchableOpacity>
+  );
+
+  const renderToBuyRow = (item) => (
+    <View key={item.id} style={styles.row}>
+      {renderCheckbox(item, false)}
+      {renderInfo(item, stockText(item))}
+      <TouchableOpacity
+        activeOpacity={0.7}
+        style={styles.iconButton}
+        onPress={() => removeFromList(item)}
+        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        accessibilityRole="button"
+        accessibilityLabel={`Remove ${item.name} from the list`}
+      >
+        <MaterialCommunityIcons
+          name="close"
+          size={20}
+          color={colors.textSecondary}
+        />
+      </TouchableOpacity>
+    </View>
+  );
+
+  const renderCartRow = (item) => {
+    const count = inCart[item.id].count;
+    return (
+      <View key={item.id} style={[styles.row, styles.rowDone]}>
+        {renderCheckbox(item, true)}
+        {renderInfo(item, `bought ${count} ${item.unit}`, true)}
+        <View style={styles.stepper}>
           <TouchableOpacity
             activeOpacity={0.7}
-            style={styles.boughtButton}
-            onPress={() => addToShoppingList(item)}
-            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+            style={styles.stepButton}
+            onPress={() => changeCount(item, -1)}
+            accessibilityRole="button"
+            accessibilityLabel="Bought one fewer"
           >
             <MaterialCommunityIcons
-              name="cart-plus"
-              size={18}
-              color={colors.white}
+              name="minus"
+              size={16}
+              color={colors.accent}
             />
           </TouchableOpacity>
+          <Text style={styles.stepValue}>{count}</Text>
           <TouchableOpacity
             activeOpacity={0.7}
-            style={styles.blockButton}
-            onPress={() => confirmDelete(item)}
-            hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+            style={styles.stepButton}
+            onPress={() => changeCount(item, 1)}
+            accessibilityRole="button"
+            accessibilityLabel="Bought one more"
           >
             <MaterialCommunityIcons
-              name="trash-can-outline"
-              size={18}
-              color={colors.danger}
+              name="plus"
+              size={16}
+              color={colors.accent}
             />
           </TouchableOpacity>
         </View>
@@ -249,85 +339,161 @@ export default function ShoppingScreen({ navigation }) {
     );
   };
 
-  const nothingHere =
-    buyNow.length === 0 &&
-    saved.length === 0 &&
-    previouslyHad.length === 0;
+  const renderSectionToggle = (key, icon, title, count) => (
+    <TouchableOpacity
+      activeOpacity={0.7}
+      style={[styles.sectionHeaderRow, styles.sectionSpacer]}
+      onPress={() => setOpen((prev) => ({ ...prev, [key]: !prev[key] }))}
+      accessibilityRole="button"
+      accessibilityState={{ expanded: open[key] }}
+    >
+      <MaterialCommunityIcons
+        name={icon}
+        size={20}
+        color={colors.textSecondary}
+      />
+      <Text style={styles.sectionTitle}>{title}</Text>
+      <View style={styles.sectionCount}>
+        <Text style={styles.sectionCountText}>{count}</Text>
+      </View>
+      <View style={styles.flex} />
+      <MaterialCommunityIcons
+        name={open[key] ? "chevron-up" : "chevron-down"}
+        size={22}
+        color={colors.textSecondary}
+      />
+    </TouchableOpacity>
+  );
+
+  const cartCount = cart.length;
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
       <View style={styles.header}>
         <Text style={styles.title}>Shopping</Text>
         <Text style={styles.subtitle}>
-          {buyNow.length} to buy · {saved.length} saved ·{" "}
-          {previouslyHad.length} previously had
+          {toBuy.length === 0 && cartCount === 0
+            ? "Nothing to buy right now"
+            : `${toBuy.length} to buy${
+                cartCount > 0 ? ` · ${cartCount} in the cart` : ""
+              }`}
         </Text>
       </View>
 
-      {nothingHere ? (
-        <EmptyState icon="cart-outline" title="No shopping items yet" />
-      ) : (
-        <ScrollView
-          style={styles.scroll}
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}
-        >
-          <View style={styles.sectionHeaderRow}>
-            <MaterialCommunityIcons
-              name="cart-arrow-down"
-              size={20}
-              color={colors.accent}
-            />
-            <Text style={styles.sectionTitle}>Buy Now</Text>
-            <View style={styles.sectionCount}>
-              <Text style={styles.sectionCountText}>{buyNow.length}</Text>
-            </View>
-          </View>
-          {buyNow.length === 0 ? (
-            <Text style={styles.emptySection}>Nothing to buy.</Text>
-          ) : (
-            buyNow.map((item) => renderRow(item, { showBought: true }))
-          )}
+      <ScrollView
+        style={styles.flex}
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.addBar}>
+          <TextInput
+            style={styles.addInput}
+            value={newName}
+            onChangeText={setNewName}
+            placeholder="Add something to buy"
+            placeholderTextColor={colors.textSecondary}
+            returnKeyType="done"
+            onSubmitEditing={addToList}
+            blurOnSubmit={false}
+          />
+          <TouchableOpacity
+            activeOpacity={0.7}
+            style={[styles.addButton, !newName.trim() && styles.addButtonOff]}
+            onPress={addToList}
+            disabled={!newName.trim()}
+            accessibilityRole="button"
+            accessibilityLabel="Add to the shopping list"
+          >
+            <MaterialCommunityIcons name="plus" size={22} color={colors.white} />
+          </TouchableOpacity>
+        </View>
 
-          <View style={[styles.sectionHeaderRow, styles.sectionSpacer]}>
-            <MaterialCommunityIcons
-              name="bookmark-outline"
-              size={20}
-              color={colors.textSecondary}
-            />
-            <Text style={styles.sectionTitle}>Saved Items</Text>
-            <View style={styles.sectionCount}>
-              <Text style={styles.sectionCountText}>{saved.length}</Text>
-            </View>
+        <View style={styles.sectionHeaderRow}>
+          <MaterialCommunityIcons
+            name="cart-outline"
+            size={20}
+            color={colors.accent}
+          />
+          <Text style={styles.sectionTitle}>To buy</Text>
+          <View style={styles.sectionCount}>
+            <Text style={styles.sectionCountText}>{toBuy.length}</Text>
           </View>
-          {saved.length === 0 ? (
-            <Text style={styles.emptySection}>Nothing saved.</Text>
-          ) : (
-            saved.map((item) => renderRow(item, { showBought: false }))
-          )}
+        </View>
+        {toBuy.length === 0 && cartCount === 0 ? (
+          <Text style={styles.emptySection}>
+            Nothing to buy. Items on your list show up here when they run low.
+          </Text>
+        ) : null}
+        {toBuy.map(renderToBuyRow)}
 
-          <View style={[styles.sectionHeaderRow, styles.sectionSpacer]}>
-            <MaterialCommunityIcons
-              name="history"
-              size={20}
-              color={colors.textSecondary}
-            />
-            <Text style={styles.sectionTitle}>Previously Had</Text>
-            <View style={styles.sectionCount}>
-              <Text style={styles.sectionCountText}>
-                {previouslyHad.length}
-              </Text>
+        {cartCount > 0 ? (
+          <>
+            <View style={styles.cartHeader}>
+              <Text style={styles.cartTitle}>In the cart</Text>
+              <TouchableOpacity
+                activeOpacity={0.7}
+                onPress={() => setInCart({})}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Text style={styles.cartClear}>Clear</Text>
+              </TouchableOpacity>
             </View>
-          </View>
-          {previouslyHad.length === 0 ? (
-            <Text style={styles.emptySection}>Nothing here.</Text>
-          ) : (
-            previouslyHad.map((item) => renderPreviouslyHadRow(item))
-          )}
+            {cart.map(renderCartRow)}
+          </>
+        ) : null}
 
-          <View style={styles.bottomSpacer} />
-        </ScrollView>
-      )}
+        {renderSectionToggle(
+          "stocked",
+          "check-circle-outline",
+          "Still in stock",
+          stocked.length
+        )}
+        {open.stocked
+          ? stocked.map((item) => (
+              <View key={item.id} style={styles.row}>
+                {renderInfo(item, stockText(item))}
+                {renderTextButton("Need it", () => needIt(item), "accent")}
+                <TouchableOpacity
+                  activeOpacity={0.7}
+                  style={styles.iconButton}
+                  onPress={() => removeFromList(item)}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Remove ${item.name} from the list`}
+                >
+                  <MaterialCommunityIcons
+                    name="close"
+                    size={20}
+                    color={colors.textSecondary}
+                  />
+                </TouchableOpacity>
+              </View>
+            ))
+          : null}
+        {open.stocked && stocked.length === 0 ? (
+          <Text style={styles.emptySection}>
+            Turn on "Shopping list" for an item and it waits here until it runs
+            low.
+          </Text>
+        ) : null}
+
+        {renderSectionToggle("ranOut", "history", "Ran out", ranOut.length)}
+        {open.ranOut
+          ? ranOut.map((item) => (
+              <View key={item.id} style={styles.row}>
+                {renderInfo(item, "ran out")}
+                {renderTextButton("Buy again", () => needIt(item), "accent")}
+                {renderTextButton("Delete", () => confirmDelete(item), "danger")}
+              </View>
+            ))
+          : null}
+        {open.ranOut && ranOut.length === 0 ? (
+          <Text style={styles.emptySection}>Nothing has run out.</Text>
+        ) : null}
+
+        <View style={styles.bottomSpacer} />
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -337,6 +503,9 @@ const createStyles = (colors) =>
     safe: {
       flex: 1,
       backgroundColor: colors.background,
+    },
+    flex: {
+      flex: 1,
     },
     header: {
       paddingHorizontal: SPACING.screen,
@@ -352,12 +521,37 @@ const createStyles = (colors) =>
       color: colors.textSecondary,
       marginTop: 2,
     },
-    scroll: {
-      flex: 1,
-    },
     scrollContent: {
       paddingHorizontal: SPACING.screen,
       paddingTop: 4,
+    },
+    addBar: {
+      flexDirection: "row",
+      alignItems: "center",
+      backgroundColor: colors.surface,
+      borderRadius: RADIUS.pill,
+      paddingLeft: SPACING.screen,
+      paddingRight: 6,
+      height: 52,
+      marginBottom: SPACING.screen,
+      ...SHADOW,
+    },
+    addInput: {
+      flex: 1,
+      fontSize: 16,
+      color: colors.textPrimary,
+      paddingVertical: 0,
+    },
+    addButton: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      backgroundColor: colors.accent,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    addButtonOff: {
+      opacity: 0.4,
     },
     sectionHeaderRow: {
       flexDirection: "row",
@@ -365,7 +559,8 @@ const createStyles = (colors) =>
       marginBottom: SPACING.card,
     },
     sectionSpacer: {
-      marginTop: SPACING.screen + 4,
+      marginTop: SPACING.inner,
+      paddingVertical: SPACING.inner,
     },
     sectionTitle: {
       fontSize: 18,
@@ -391,26 +586,60 @@ const createStyles = (colors) =>
     emptySection: {
       fontSize: 14,
       color: colors.textSecondary,
-      fontStyle: "italic",
+      lineHeight: 20,
+      marginBottom: SPACING.card,
+    },
+    cartHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      marginTop: SPACING.inner,
       marginBottom: SPACING.inner,
+    },
+    cartTitle: {
+      fontSize: 14,
+      fontWeight: "700",
+      color: colors.textSecondary,
+    },
+    cartClear: {
+      fontSize: 14,
+      fontWeight: "700",
+      color: colors.accent,
     },
     row: {
       flexDirection: "row",
       alignItems: "center",
       backgroundColor: colors.surface,
       borderRadius: RADIUS.card,
-      padding: SPACING.card,
-      marginBottom: SPACING.card,
+      paddingVertical: 10,
+      paddingHorizontal: SPACING.card,
+      marginBottom: SPACING.inner,
       ...SHADOW,
+    },
+    rowDone: {
+      opacity: 0.75,
     },
     rowMain: {
       flex: 1,
       flexDirection: "row",
       alignItems: "center",
     },
+    checkbox: {
+      width: 30,
+      height: 30,
+      borderRadius: 8,
+      borderWidth: 2,
+      borderColor: colors.accent,
+      alignItems: "center",
+      justifyContent: "center",
+      marginRight: SPACING.card,
+    },
+    checkboxChecked: {
+      backgroundColor: colors.accent,
+    },
     thumb: {
-      width: 48,
-      height: 48,
+      width: 44,
+      height: 44,
       borderRadius: RADIUS.button,
       backgroundColor: colors.surfaceAlt,
     },
@@ -427,31 +656,65 @@ const createStyles = (colors) =>
       fontWeight: "700",
       color: colors.textPrimary,
     },
+    rowNameDone: {
+      textDecorationLine: "line-through",
+      color: colors.textSecondary,
+    },
     rowStatus: {
       fontSize: 13,
       color: colors.textSecondary,
       marginTop: 2,
     },
-    rowActions: {
+    iconButton: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      alignItems: "center",
+      justifyContent: "center",
+      marginLeft: 4,
+    },
+    textButton: {
+      paddingVertical: 7,
+      paddingHorizontal: 12,
+      borderRadius: RADIUS.pill,
+      backgroundColor: colors.surfaceAlt,
+      marginLeft: 6,
+    },
+    textButtonAccent: {
+      backgroundColor: colors.accentLight,
+    },
+    textButtonDanger: {
+      backgroundColor: hexToRgba(colors.danger, 0.14),
+    },
+    textButtonLabel: {
+      fontSize: 13,
+      fontWeight: "700",
+      color: colors.textPrimary,
+    },
+    textButtonLabelAccent: {
+      color: colors.accent,
+    },
+    textButtonLabelDanger: {
+      color: colors.danger,
+    },
+    stepper: {
       flexDirection: "row",
       alignItems: "center",
     },
-    boughtButton: {
-      width: 38,
-      height: 38,
-      borderRadius: 19,
-      backgroundColor: colors.accent,
+    stepButton: {
+      width: 30,
+      height: 30,
+      borderRadius: 15,
+      backgroundColor: colors.accentLight,
       alignItems: "center",
       justifyContent: "center",
-      marginRight: SPACING.inner,
     },
-    blockButton: {
-      width: 38,
-      height: 38,
-      borderRadius: 19,
-      backgroundColor: hexToRgba(colors.danger, 0.14),
-      alignItems: "center",
-      justifyContent: "center",
+    stepValue: {
+      minWidth: 26,
+      textAlign: "center",
+      fontSize: 15,
+      fontWeight: "800",
+      color: colors.textPrimary,
     },
     bottomSpacer: {
       height: 24,

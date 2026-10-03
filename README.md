@@ -26,16 +26,20 @@ leaves your phone unless you export a backup yourself.
   the open one is left instead of pretending it is full or empty.
 - **Expiry dates** — give an item an optional expiry date. Anything expired or
   due within four days is flagged on its card and pinned to the top of its room.
-- **Shopping list** — flag items you always re-buy and they show up under
-  "Buy Now" as soon as they run low, whichever room they belong to.
-- **Nothing gets lost** — items you finish move to a "Previously Had" list, so you
-  can put them back on the shopping list or delete them for good. Deleting shows
-  an undo button for a few seconds.
+- **Shopping list** — type anything you need into the box on the Shopping tab,
+  or flag items you always re-buy so they land under "To buy" whenever they run
+  low, whichever room they belong to. In the shop, tick things off as you go:
+  ticked items stay in "In the cart", where you can set how many you bought or
+  untick a mistake.
+- **Nothing gets lost** — things you finish that aren't on the list wait under
+  "Ran out", one tap from going back on it. Deleting shows an undo button for a
+  few seconds.
 - **Quick to browse** — items sit three to a row. Each category sits on a patch
   of its own color with its name on it, so a row can hold the end of one
   category and the start of the next. Search hides behind a button until you
   need it.
-- **Light and dark** — follows your system theme, or pick one in Settings.
+- **Light and dark** — soft greys rather than stark white or black. Follows your
+  system theme, or pick one in Settings.
 - **Backup and restore** — export everything to a JSON file from Settings, and
   import it again on the same phone or a new one.
 - **Photos that stick** — pictures are copied into the app's own storage, so

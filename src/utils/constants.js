@@ -1,33 +1,35 @@
+// Light mode is a soft warm grey rather than paper white, and dark mode a
+// charcoal rather than near-black, so neither end is harsh on the eyes.
 export const LIGHT_COLORS = {
-  background: "#FAFAFA",
-  surface: "#FFFFFF",
-  surfaceAlt: "#F0F0F0",
+  background: "#E9EAE5",
+  surface: "#F5F5F1",
+  surfaceAlt: "#DDDFD8",
   accent: "#2E7D32",
-  accentLight: "#E8F5E9",
-  textPrimary: "#212121",
-  textSecondary: "#757575",
-  border: "#E0E0E0",
-  danger: "#F44336",
-  warning: "#E67E00",
+  accentLight: "#D5E6D3",
+  textPrimary: "#1F2421",
+  textSecondary: "#62675F",
+  border: "#CDD0C7",
+  danger: "#D84339",
+  warning: "#C96F00",
   white: "#FFFFFF",
   shadow: "#000000",
-  tabBar: "#FFFFFF",
+  tabBar: "#F1F1EC",
 };
 
 export const DARK_COLORS = {
-  background: "#121212",
-  surface: "#1E1E1E",
-  surfaceAlt: "#2A2A2A",
-  accent: "#66BB6A",
-  accentLight: "#1B3A1E",
-  textPrimary: "#ECECEC",
-  textSecondary: "#9E9E9E",
-  border: "#3A3A3A",
-  danger: "#EF5350",
+  background: "#25282C",
+  surface: "#30343A",
+  surfaceAlt: "#3B4047",
+  accent: "#6CC070",
+  accentLight: "#33503A",
+  textPrimary: "#ECEDEE",
+  textSecondary: "#A9ADB3",
+  border: "#4A5058",
+  danger: "#EF6B62",
   warning: "#FFB74D",
   white: "#FFFFFF",
   shadow: "#000000",
-  tabBar: "#1A1A1A",
+  tabBar: "#2C3035",
 };
 
 export const SHADOW = {
@@ -152,11 +154,21 @@ export const isAlmostOut = (item) => {
 // Items with stock show on their room's tab.
 export const isInStock = (item) => !!item && item.quantity > 0;
 
-// Ran out and not on the shopping list — shown under Previously Had.
-// Every out-of-stock item lands either here or in Buy Now, so nothing is
-// left stranded with no screen to reach it from.
+// Shopping list sections. "To buy" holds anything put on the list by hand
+// (`wanted`) plus re-buy items that are running low. Re-buy items with stock
+// to spare are "Still in stock". Whatever ran out and is on neither list is
+// under "Ran out". Every out-of-stock item lands in "To buy" or "Ran out", so
+// nothing is left stranded with no screen to reach it from.
+export const isOnBuyList = (item) =>
+  !!item &&
+  (!!item.wanted ||
+    (!!item.recurring && !item.neverRecommend && isAlmostOut(item)));
+
+export const isStillStocked = (item) =>
+  !!item && !!item.recurring && !item.neverRecommend && !isOnBuyList(item);
+
 export const isPreviouslyHad = (item) =>
-  !!item && item.quantity <= 0 && !item.recurring;
+  !!item && item.quantity <= 0 && !item.recurring && !item.wanted;
 
 // Rounds a value to the nearest OPENED_STEP and clamps it to 0..100.
 export const roundPercent = (value) => {

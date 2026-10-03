@@ -151,6 +151,7 @@ const normalizeItem = (raw, migrateToV2) => {
     expiryDate: parseExpiry(raw.expiryDate),
     recurring: !!raw.recurring,
     neverRecommend: !!raw.neverRecommend,
+    wanted: !!raw.wanted,
     note: typeof raw.note === "string" ? raw.note : "",
     createdAt: raw.createdAt || now,
     updatedAt: raw.updatedAt || now,
@@ -186,6 +187,7 @@ const mergeDuplicates = (items) => {
       note: keep.note || drop.note,
       recurring: keep.recurring || drop.recurring,
       neverRecommend: keep.neverRecommend && drop.neverRecommend,
+      wanted: keep.wanted || drop.wanted,
       history: capHistory(
         [...(keep.history || []), ...(drop.history || [])].sort(byDate)
       ),
@@ -306,6 +308,9 @@ function reducer(state, action) {
         note: candidate.note || existing.note,
         recurring: candidate.recurring || existing.recurring,
         neverRecommend: candidate.recurring ? false : existing.neverRecommend,
+        // Adding stock means it has been bought; adding none keeps it wanted.
+        wanted:
+          candidate.quantity > 0 ? false : existing.wanted || candidate.wanted,
         openedPercent: mergedOpenedPercent(existing, candidate),
         expiryDate: mergedExpiry(existing, candidate),
         updatedAt: now,
@@ -344,9 +349,14 @@ function reducer(state, action) {
         });
       }
 
+      // More stock means whatever was wanted has been bought, unless the
+      // caller says otherwise (as un-ticking a purchase does).
+      const restocked =
+        changes.quantity != null && changes.quantity > existing.quantity;
       const items = [...state.items];
       items[index] = settleEmpty({
         ...existing,
+        ...(restocked ? { wanted: false } : {}),
         ...changes,
         id: existing.id,
         createdAt: existing.createdAt,
@@ -455,6 +465,7 @@ export function InventoryProvider({ children }) {
       expiryDate: parseExpiry(itemData.expiryDate),
       recurring: !!itemData.recurring,
       neverRecommend: false,
+      wanted: !!itemData.wanted,
       note: itemData.note ?? "",
       createdAt: now,
       updatedAt: now,
