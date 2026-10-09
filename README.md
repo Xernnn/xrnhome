@@ -123,3 +123,7 @@ React Native, [Expo](https://expo.dev/) (SDK 54),
 [React Navigation](https://reactnavigation.org/) and
 [AsyncStorage](https://react-native-async-storage.github.io/async-storage/) for
 local persistence.
+
+## License
+
+[MIT](LICENSE)
