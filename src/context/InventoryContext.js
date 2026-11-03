@@ -111,8 +111,25 @@ const mergedOpenedPercent = (a, b) => {
  * When migrateToV2 is set, quantity is rewritten from "sealed only" to a total
  * that includes the opened unit.
  */
+// Photos are files the app copied (file://), or what the picker hands back on
+// Android (content://) and web (data:, blob:). Anything else, a web address in
+// an imported backup above all, would have the app fetch it: keep it out.
+const safeImageUri = (uri) =>
+  typeof uri === "string" && /^(file|content|blob):|^data:image\//i.test(uri)
+    ? uri
+    : null;
+
+// History entries are shown as text: an entry from a damaged or hand-made
+// backup whose action isn't a string would crash the detail screen.
+const cleanHistory = (history) =>
+  capHistory(
+    (Array.isArray(history) ? history : [])
+      .filter((e) => e && typeof e === "object" && typeof e.date === "string")
+      .map((e) => (typeof e.action === "string" ? e : { ...e, action: String(e.action ?? "") }))
+  );
+
 const normalizeItem = (raw, migrateToV2) => {
-  if (!raw || typeof raw !== "object") {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     return null;
   }
 
@@ -128,10 +145,7 @@ const normalizeItem = (raw, migrateToV2) => {
     openedPercent = 100;
   }
 
-  let quantity =
-    typeof raw.quantity === "number" && !Number.isNaN(raw.quantity)
-      ? raw.quantity
-      : 0;
+  let quantity = Number.isFinite(raw.quantity) ? Math.min(raw.quantity, 1e6) : 0;
   if (migrateToV2 && openedPercent !== null) {
     quantity += 1;
   }
@@ -140,11 +154,11 @@ const normalizeItem = (raw, migrateToV2) => {
   const room = roomExists(raw.room) ? raw.room : DEFAULT_ROOM;
 
   return settleEmpty({
-    id: raw.id || generateId(),
+    id: typeof raw.id === "string" && raw.id ? raw.id : generateId(),
     name: typeof raw.name === "string" ? raw.name : "Untitled item",
     room,
     category: categoryExists(raw.category, room) ? raw.category : "Other",
-    imageUri: raw.imageUri ?? null,
+    imageUri: safeImageUri(raw.imageUri),
     quantity: Math.max(0, quantity),
     unit: typeof raw.unit === "string" && raw.unit ? raw.unit : QUANTITY_UNITS[0],
     openedPercent,
@@ -153,13 +167,29 @@ const normalizeItem = (raw, migrateToV2) => {
     neverRecommend: !!raw.neverRecommend,
     wanted: !!raw.wanted,
     note: typeof raw.note === "string" ? raw.note : "",
-    createdAt: raw.createdAt || now,
-    updatedAt: raw.updatedAt || now,
-    history: Array.isArray(raw.history) ? raw.history : [],
+    createdAt: typeof raw.createdAt === "string" && raw.createdAt ? raw.createdAt : now,
+    updatedAt: typeof raw.updatedAt === "string" && raw.updatedAt ? raw.updatedAt : now,
+    history: cleanHistory(raw.history),
   });
 };
 
 const byDate = (a, b) => String(a.date).localeCompare(String(b.date));
+
+// Every update, delete and list key goes by id, so two items sharing one (a
+// backup edited by hand, or one merged from two phones) would act as one.
+const uniqueIds = (items) => {
+  const seen = new Set();
+  return items.map((item) => {
+    if (!seen.has(item.id)) {
+      seen.add(item.id);
+      return item;
+    }
+    let id = generateId();
+    while (seen.has(id)) id = generateId();
+    seen.add(id);
+    return { ...item, id };
+  });
+};
 
 // Folds entries that describe the same item into a single record.
 const mergeDuplicates = (items) => {
@@ -411,9 +441,11 @@ export function InventoryProvider({ children }) {
         loadSchemaVersion(),
       ]);
       const migrate = version < CURRENT_SCHEMA_VERSION;
-      const normalized = Array.isArray(stored)
-        ? stored.map((raw) => normalizeItem(raw, migrate)).filter(Boolean)
-        : [];
+      const normalized = uniqueIds(
+        Array.isArray(stored)
+          ? stored.map((raw) => normalizeItem(raw, migrate)).filter(Boolean)
+          : []
+      );
 
       if (mounted) {
         dispatch({
@@ -520,9 +552,11 @@ export function InventoryProvider({ children }) {
   // data is on load.
   const replaceAllItems = useCallback((rawItems, schemaVersion) => {
     const migrate = schemaVersion < CURRENT_SCHEMA_VERSION;
-    const normalized = Array.isArray(rawItems)
-      ? rawItems.map((raw) => normalizeItem(raw, migrate)).filter(Boolean)
-      : [];
+    const normalized = uniqueIds(
+      Array.isArray(rawItems)
+        ? rawItems.map((raw) => normalizeItem(raw, migrate)).filter(Boolean)
+        : []
+    );
     const items = mergeDuplicates(normalized);
     dispatch({ type: ACTIONS.REPLACE_ALL, payload: items });
     return items.length;
