@@ -1,4 +1,8 @@
-# xrnhome
+<p align="center">
+  <img src="assets/icon.png" width="72" height="72" alt="">
+</p>
+
+<h1 align="center">xrnhome</h1>
 
 A simple home inventory app for your phone. Add the food you keep and the things
 you own, tap a button when you use some, and let the app tell you what needs
