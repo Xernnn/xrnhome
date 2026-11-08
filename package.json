@@ -54,5 +54,8 @@
     "testMatch": [
       "<rootDir>/test/**/*.test.js"
     ]
+  },
+  "overrides": {
+    "postcss": "^8.5.23"
   }
 }
