@@ -1,0 +1,299 @@
+/* The page around the app's own screens. The colours come from the theme, through
+   the variables DesktopApp sets, so nothing here is a colour of its own. */
+
+@font-face {
+  font-family: "-apple-system";
+  src: url("/xrnhome/fonts/Geist-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+.dk,
+.dk * {
+  box-sizing: border-box;
+}
+
+.dk {
+  flex: 1;
+  min-width: 0;
+  height: 100vh;
+  height: 100dvh;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(350px, 23vw, 430px);
+  grid-template-rows: auto minmax(0, 1fr);
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, sans-serif;
+  font-size: 14px;
+  text-rendering: geometricPrecision;
+  -webkit-font-smoothing: antialiased;
+}
+.dk.no-panel {
+  grid-template-columns: minmax(0, 1fr);
+}
+/* No weight of their own, so any class below, and the app's own styles, win */
+:where(.dk) :where(button, input, select) {
+  font: inherit;
+  color: inherit;
+}
+.dk button {
+  cursor: pointer;
+}
+.dk :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.dk .dk-add-name:focus-visible {
+  outline: none;
+}
+
+.dk-top {
+  grid-column: 1;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+  padding: 12px 20px 6px;
+}
+.dk-gap {
+  flex: 1;
+}
+
+.dk-tabs {
+  flex: none;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 99px;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.dk-tabs button {
+  height: 34px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 99px;
+  background: none;
+  color: var(--text2);
+  font-size: 14px;
+  font-weight: 600;
+}
+.dk-tabs button[aria-current="page"] {
+  background: var(--text);
+  color: var(--bg);
+}
+
+.dk-add {
+  position: relative;
+  flex: 1;
+  min-width: 170px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 42px;
+  padding: 0 16px;
+  border-radius: 21px;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.dk-add:focus-within {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+.dk-add-mark {
+  display: flex;
+  color: var(--text2);
+}
+.dk-add-name {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: none;
+  font-size: 15px;
+}
+.dk-add-name::placeholder {
+  color: var(--text2);
+}
+/* Under the box, so that it can take its time on a narrow window */
+.dk-add-more {
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + 6px);
+  left: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  max-width: min(640px, calc(100vw - 420px));
+  padding: 10px;
+  border-radius: 20px;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line), 0 12px 30px rgba(0, 0, 0, 0.18);
+}
+.dk-add-hint {
+  flex-basis: 100%;
+  padding: 0 4px;
+  color: var(--text2);
+  font-size: 13px;
+}
+.dk-field {
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg);
+}
+.dk-qty {
+  width: 68px;
+}
+.dk-add-go,
+.dk-add-details {
+  height: 36px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 18px;
+  font-weight: 600;
+}
+.dk-add-go {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.dk-add-details {
+  background: none;
+  color: var(--text2);
+}
+
+.dk-sync {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 190px;
+  height: 34px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 12px;
+  background: none;
+  color: var(--text2);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+.dk-sync span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dk-sync i {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.dk-sync[data-state="off"] i,
+.dk-sync[data-state="syncing"] i {
+  background: var(--line2);
+}
+.dk-sync[data-state="syncing"] i {
+  animation: dk-pulse 1s ease-in-out infinite alternate;
+}
+.dk-sync[data-state="error"] i {
+  background: var(--danger);
+}
+.dk-sync[data-state="conflict"] i {
+  background: var(--warn);
+}
+.dk-sync[data-state="conflict"] {
+  color: var(--warn);
+  font-weight: 600;
+}
+@keyframes dk-pulse {
+  to {
+    opacity: 0.35;
+  }
+}
+
+.dk-gear {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.dk-main {
+  grid-column: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.dk-page {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.dk-panel {
+  grid-column: 2;
+  grid-row: 1 / -1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-left: 1px solid var(--line);
+}
+.dk-basket {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* The card, at a pointer's pace. TouchableOpacity sets its own transition. */
+.dk [data-card] {
+  transition: transform 0.16s cubic-bezier(0.3, 1.4, 0.5, 1), opacity 0.15s !important;
+}
+.dk [data-card]:hover {
+  transform: translateY(-4px) rotate(-0.6deg);
+}
+.dk [data-cart] {
+  opacity: 0;
+  transition: opacity 0.12s, transform 0.12s;
+}
+.dk [data-card]:hover [data-cart],
+.dk [data-cart]:focus-visible {
+  opacity: 1;
+}
+[data-level] {
+  transition: height 0.25s, top 0.25s;
+}
+
+.dk-toast {
+  position: fixed;
+  left: 50%;
+  bottom: -62px;
+  width: 460px;
+  height: 0;
+  margin-left: -230px;
+  z-index: 20;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dk [data-card],
+  [data-level] {
+    transition: none !important;
+  }
+  .dk [data-card]:hover {
+    transform: none;
+  }
+}

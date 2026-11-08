@@ -8,39 +8,39 @@ import {
   getExpiryShortLabel,
   getExpiryLabel,
   getExpiryColor,
-  hexToRgba,
   RADIUS,
 } from "../utils/constants";
 
-// Small colored pill showing expiry status. Renders nothing for fresh/no-date
-// unless `showFresh` is set. Pass `full` for the longer label (used on detail).
-export default function ExpiryPill({ item, full = false, showFresh = false }) {
+// A small line saying how an item's date stands, on the status's own tint.
+// Renders nothing for an item with no date or one that's far off.
+export default function ExpiryPill({ item }) {
   const { colors } = useTheme();
   const status = getExpiryStatus(item);
-  const styles = useMemo(() => createStyles(colors), [colors]);
+  const styles = useMemo(() => createStyles(), []);
 
-  if (!status || (status === "fresh" && !showFresh)) {
+  if (status !== "expired" && status !== "soon") {
     return null;
   }
 
+  const expired = status === "expired";
   const color = getExpiryColor(status, colors);
-  const label = full ? getExpiryLabel(item) : getExpiryShortLabel(item);
-  const icon =
-    status === "expired"
-      ? "alert-circle"
-      : status === "soon"
-      ? "clock-alert-outline"
-      : "calendar-check-outline";
 
   return (
     <View
-      style={[styles.pill, { backgroundColor: hexToRgba(color, 0.16) }]}
+      style={[
+        styles.pill,
+        { backgroundColor: expired ? colors.dangerLight : colors.warningLight },
+      ]}
       accessible
       accessibilityLabel={getExpiryLabel(item)}
     >
-      <MaterialCommunityIcons name={icon} size={12} color={color} />
-      <Text style={[styles.text, { color }]} numberOfLines={1}>
-        {label}
+      <MaterialCommunityIcons
+        name={expired ? "alert-circle" : "clock-alert-outline"}
+        size={12}
+        color={color}
+      />
+      <Text style={[styles.text, { color }]} numberOfLines={1} maxFontSizeMultiplier={1.2}>
+        {getExpiryShortLabel(item)}
       </Text>
     </View>
   );
@@ -52,11 +52,12 @@ const createStyles = () =>
       flexDirection: "row",
       alignItems: "center",
       alignSelf: "flex-start",
-      paddingVertical: 3,
-      paddingHorizontal: 7,
+      paddingVertical: 2,
+      paddingHorizontal: 6,
       borderRadius: RADIUS.pill,
     },
     text: {
+      flexShrink: 1,
       fontSize: 11,
       fontWeight: "700",
       marginLeft: 3,

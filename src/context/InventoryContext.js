@@ -6,471 +6,135 @@ import React, {
   useMemo,
   useCallback,
   useRef,
+  useState,
 } from "react";
-import { View, ActivityIndicator, StyleSheet } from "react-native";
+import { View, ActivityIndicator, StyleSheet, Alert } from "react-native";
 import {
+  loadCategories,
   loadItems,
+  saveCategories,
   saveItems,
+  saveSafeCopy,
   loadSchemaVersion,
   saveSchemaVersion,
   CURRENT_SCHEMA_VERSION,
 } from "../utils/storage";
 import { deleteImage } from "../utils/images";
+import { deviceName } from "../utils/homeServer";
 import {
   DEFAULT_ROOM,
-  MAX_HISTORY_ENTRIES,
-  OPENED_STEP,
   QUANTITY_UNITS,
   categoryExists,
-  isTrackingOpened,
-  itemKey,
+  cleanCustomCategories,
+  getCustomCategories,
+  isOnBuyList,
   roomExists,
   roundPercent,
+  setCustomCategories,
 } from "../utils/constants";
+import {
+  ACTIONS,
+  cleanRestockRule,
+  generateId,
+  initialState,
+  mergeRecords,
+  prepareItems,
+  reducer,
+  takeOffList,
+} from "../utils/inventoryLogic";
+import { readPackColours } from "../utils/packColourCache";
 import { useTheme } from "./ThemeContext";
 
 const InventoryContext = createContext(null);
 
-const initialState = {
-  items: [],
-  loading: true,
-  undo: null, // { item, index } — the most recently deleted item, for undo.
-};
-
-const ACTIONS = {
-  SET_ITEMS: "SET_ITEMS",
-  ADD_ITEM: "ADD_ITEM",
-  UPDATE_ITEM: "UPDATE_ITEM",
-  DELETE_ITEM: "DELETE_ITEM",
-  RESTORE_ITEM: "RESTORE_ITEM",
-  CLEAR_UNDO: "CLEAR_UNDO",
-  REPLACE_ALL: "REPLACE_ALL",
-};
-
-const generateId = () =>
-  `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
-
-const capHistory = (history) => {
-  if (!Array.isArray(history)) {
-    return [];
-  }
-  if (history.length <= MAX_HISTORY_ENTRIES) {
-    return history;
-  }
-  return history.slice(history.length - MAX_HISTORY_ENTRIES);
-};
-
-const clampPercent = (value) => Math.max(0, Math.min(100, value));
-
-// What an item looks like once it has run out. A % item stays a % item, with
-// its open unit reading 100% so whatever gets bought next starts out full. The
-// expiry date belonged to the stock that is gone, so it is dropped.
-const settleEmpty = (item) => {
-  if (item.quantity > 0) {
-    return item;
-  }
-  return {
-    ...item,
-    openedPercent: isTrackingOpened(item) ? 100 : item.openedPercent,
-    expiryDate: null,
-  };
-};
-
-const parseExpiry = (value) => {
-  if (!value) {
-    return null;
-  }
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
-};
-
-// Topping up stock that is still there keeps whichever date comes first.
-const mergedExpiry = (existing, incoming) => {
-  if (existing.quantity <= 0 || !existing.expiryDate) {
-    return incoming.expiryDate || null;
-  }
-  if (!incoming.expiryDate) {
-    return existing.expiryDate;
-  }
-  return existing.expiryDate < incoming.expiryDate
-    ? existing.expiryDate
-    : incoming.expiryDate;
-};
-
-// When two records of one item merge, the open unit comes from whichever of
-// them still has stock.
-const mergedOpenedPercent = (a, b) => {
-  if (isTrackingOpened(a) && a.quantity > 0) {
-    return a.openedPercent;
-  }
-  return isTrackingOpened(b) ? b.openedPercent : a.openedPercent;
-};
-
-/**
- * Normalizes any stored item (including legacy shapes) into the current model.
- * When migrateToV2 is set, quantity is rewritten from "sealed only" to a total
- * that includes the opened unit.
- */
-// Photos are files the app copied (file://), or what the picker hands back on
-// Android (content://) and web (data:, blob:). Anything else, a web address in
-// an imported backup above all, would have the app fetch it: keep it out.
-const safeImageUri = (uri) =>
-  typeof uri === "string" && /^(file|content|blob):|^data:image\//i.test(uri)
-    ? uri
-    : null;
-
-// History entries are shown as text: an entry from a damaged or hand-made
-// backup whose action isn't a string would crash the detail screen.
-const cleanHistory = (history) =>
-  capHistory(
-    (Array.isArray(history) ? history : [])
-      .filter((e) => e && typeof e === "object" && typeof e.date === "string")
-      .map((e) => (typeof e.action === "string" ? e : { ...e, action: String(e.action ?? "") }))
-  );
-
-const normalizeItem = (raw, migrateToV2) => {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    return null;
-  }
-
-  let openedPercent = null;
-  if (typeof raw.openedPercent === "number" && !Number.isNaN(raw.openedPercent)) {
-    openedPercent = roundPercent(raw.openedPercent);
-  } else if (
-    raw.openedAmount !== null &&
-    raw.openedAmount !== undefined &&
-    !Number.isNaN(Number(raw.openedAmount))
-  ) {
-    // Legacy item had an opened amount in g/ml — treat the open unit as full.
-    openedPercent = 100;
-  }
-
-  let quantity = Number.isFinite(raw.quantity) ? Math.min(raw.quantity, 1e6) : 0;
-  if (migrateToV2 && openedPercent !== null) {
-    quantity += 1;
-  }
-
-  const now = new Date().toISOString();
-  const room = roomExists(raw.room) ? raw.room : DEFAULT_ROOM;
-
-  return settleEmpty({
-    id: typeof raw.id === "string" && raw.id ? raw.id : generateId(),
-    name: typeof raw.name === "string" ? raw.name : "Untitled item",
-    room,
-    category: categoryExists(raw.category, room) ? raw.category : "Other",
-    imageUri: safeImageUri(raw.imageUri),
-    quantity: Math.max(0, quantity),
-    unit: typeof raw.unit === "string" && raw.unit ? raw.unit : QUANTITY_UNITS[0],
-    openedPercent,
-    expiryDate: parseExpiry(raw.expiryDate),
-    recurring: !!raw.recurring,
-    neverRecommend: !!raw.neverRecommend,
-    wanted: !!raw.wanted,
-    note: typeof raw.note === "string" ? raw.note : "",
-    createdAt: typeof raw.createdAt === "string" && raw.createdAt ? raw.createdAt : now,
-    updatedAt: typeof raw.updatedAt === "string" && raw.updatedAt ? raw.updatedAt : now,
-    history: cleanHistory(raw.history),
-  });
-};
-
-const byDate = (a, b) => String(a.date).localeCompare(String(b.date));
-
-// Every update, delete and list key goes by id, so two items sharing one (a
-// backup edited by hand, or one merged from two phones) would act as one.
-const uniqueIds = (items) => {
-  const seen = new Set();
-  return items.map((item) => {
-    if (!seen.has(item.id)) {
-      seen.add(item.id);
-      return item;
-    }
-    let id = generateId();
-    while (seen.has(id)) id = generateId();
-    seen.add(id);
-    return { ...item, id };
-  });
-};
-
-// Folds entries that describe the same item into a single record.
-const mergeDuplicates = (items) => {
-  const byKey = new Map();
-
-  items.forEach((item) => {
-    const key = itemKey(item);
-    const seen = byKey.get(key);
-    if (!seen) {
-      byKey.set(key, item);
-      return;
-    }
-
-    const [keep, drop] =
-      String(seen.createdAt) <= String(item.createdAt)
-        ? [seen, item]
-        : [item, seen];
-
-    byKey.set(key, {
-      ...keep,
-      quantity: (keep.quantity || 0) + (drop.quantity || 0),
-      openedPercent: mergedOpenedPercent(keep, drop),
-      expiryDate: mergedExpiry(keep, drop),
-      imageUri: keep.imageUri || drop.imageUri,
-      note: keep.note || drop.note,
-      recurring: keep.recurring || drop.recurring,
-      neverRecommend: keep.neverRecommend && drop.neverRecommend,
-      wanted: keep.wanted || drop.wanted,
-      history: capHistory(
-        [...(keep.history || []), ...(drop.history || [])].sort(byDate)
-      ),
-    });
-  });
-
-  return Array.from(byKey.values());
-};
-
-/**
- * Pure helper that computes the result of a +/- step on an item.
- * dir > 0 increases, dir < 0 decreases.
- * `willEmpty` reports that the change leaves the item at zero units; the caller
- * decides whether that means a prompt or a quiet move to the shopping list.
- */
-export function computeStep(item, dir) {
-  const noop = { changes: null, historyEntry: null, willEmpty: false };
-  if (!item) {
-    return noop;
-  }
-  const tracking = isTrackingOpened(item);
-
-  if (dir > 0) {
-    if (tracking && item.quantity > 0 && item.openedPercent < 100) {
-      const next = clampPercent(item.openedPercent + OPENED_STEP);
-      return {
-        changes: { openedPercent: next },
-        historyEntry: {
-          action: `Topped the open unit up to ${next}%`,
-          quantityBefore: item.quantity,
-          quantityAfter: item.quantity,
-        },
-        willEmpty: false,
-      };
-    }
-
-    const q = item.quantity + 1;
-    return {
-      changes: { quantity: q },
-      historyEntry: {
-        action: `Added 1 ${item.unit} (${q} total)`,
-        quantityBefore: item.quantity,
-        quantityAfter: q,
-      },
-      willEmpty: false,
-    };
-  }
-
-  if (item.quantity <= 0) {
-    return noop;
-  }
-
-  if (tracking) {
-    const nextPercent = item.openedPercent - OPENED_STEP;
-    if (nextPercent > 0) {
-      return {
-        changes: { openedPercent: nextPercent },
-        historyEntry: {
-          action: `Used 10% (${nextPercent}% left)`,
-          quantityBefore: item.quantity,
-          quantityAfter: item.quantity,
-        },
-        willEmpty: false,
-      };
-    }
-
-    // The open unit is spent, so it leaves the count. The item keeps counting
-    // in % even when that was the last unit.
-    const q = item.quantity - 1;
-    return {
-      changes: { quantity: q, openedPercent: 100 },
-      historyEntry: {
-        action:
-          q === 0
-            ? "Used the last unit"
-            : `Finished a unit, opened the next (${q} left)`,
-        quantityBefore: item.quantity,
-        quantityAfter: q,
-      },
-      willEmpty: q === 0,
-    };
-  }
-
-  const q = item.quantity - 1;
-  return {
-    changes: { quantity: q },
-    historyEntry: {
-      action: q === 0 ? "Used the last unit" : `Used 1 ${item.unit} (${q} left)`,
-      quantityBefore: item.quantity,
-      quantityAfter: q,
-    },
-    willEmpty: q === 0,
-  };
-}
-
-function reducer(state, action) {
-  switch (action.type) {
-    case ACTIONS.SET_ITEMS:
-      return { ...state, items: action.payload, loading: false };
-
-    case ACTIONS.ADD_ITEM: {
-      const { candidate, now } = action.payload;
-      const key = itemKey(candidate);
-      const index = state.items.findIndex((item) => itemKey(item) === key);
-
-      if (index === -1) {
-        return { ...state, items: [settleEmpty(candidate), ...state.items] };
-      }
-
-      // Same item already tracked, so top it up instead of adding a second card.
-      const existing = state.items[index];
-      const quantity = (existing.quantity || 0) + (candidate.quantity || 0);
-      const items = [...state.items];
-      items[index] = settleEmpty({
-        ...existing,
-        quantity,
-        imageUri: existing.imageUri || candidate.imageUri,
-        note: candidate.note || existing.note,
-        recurring: candidate.recurring || existing.recurring,
-        neverRecommend: candidate.recurring ? false : existing.neverRecommend,
-        // Adding stock means it has been bought; adding none keeps it wanted.
-        wanted:
-          candidate.quantity > 0 ? false : existing.wanted || candidate.wanted,
-        openedPercent: mergedOpenedPercent(existing, candidate),
-        expiryDate: mergedExpiry(existing, candidate),
-        updatedAt: now,
-        history: capHistory([
-          ...(existing.history || []),
-          {
-            date: now,
-            action: `Added ${candidate.quantity} ${candidate.unit} (${quantity} total)`,
-            quantityBefore: existing.quantity || 0,
-            quantityAfter: quantity,
-          },
-        ]),
-      });
-      return { ...state, items };
-    }
-
-    case ACTIONS.UPDATE_ITEM: {
-      const { id, changes, historyEntry, now } = action.payload;
-      const index = state.items.findIndex((item) => item.id === id);
-      if (index === -1) {
-        return state;
-      }
-
-      const existing = state.items[index];
-      const history = existing.history ? [...existing.history] : [];
-
-      if (historyEntry) {
-        history.push({
-          date: now,
-          action: historyEntry.action ?? "Updated item",
-          quantityBefore: historyEntry.quantityBefore ?? existing.quantity ?? 0,
-          quantityAfter:
-            historyEntry.quantityAfter ??
-            (changes.quantity != null ? changes.quantity : existing.quantity) ??
-            0,
-        });
-      }
-
-      // More stock means whatever was wanted has been bought, unless the
-      // caller says otherwise (as un-ticking a purchase does).
-      const restocked =
-        changes.quantity != null && changes.quantity > existing.quantity;
-      const items = [...state.items];
-      items[index] = settleEmpty({
-        ...existing,
-        ...(restocked ? { wanted: false } : {}),
-        ...changes,
-        id: existing.id,
-        createdAt: existing.createdAt,
-        updatedAt: now,
-        history: capHistory(history),
-      });
-      return { ...state, items };
-    }
-
-    case ACTIONS.DELETE_ITEM: {
-      const index = state.items.findIndex((item) => item.id === action.payload);
-      if (index === -1) {
-        return state;
-      }
-      return {
-        ...state,
-        items: state.items.filter((item) => item.id !== action.payload),
-        undo: { item: state.items[index], index },
-      };
-    }
-
-    case ACTIONS.RESTORE_ITEM: {
-      if (!state.undo) {
-        return state;
-      }
-      const { item, index } = state.undo;
-      const items = [...state.items];
-      items.splice(Math.max(0, Math.min(index, items.length)), 0, item);
-      return { ...state, items, undo: null };
-    }
-
-    case ACTIONS.CLEAR_UNDO:
-      return { ...state, undo: null };
-
-    case ACTIONS.REPLACE_ALL:
-      return { ...state, items: action.payload, undo: null };
-
-    default:
-      return state;
-  }
-}
-
 export function InventoryProvider({ children }) {
   const [state, dispatch] = useReducer(reducer, initialState);
+  const [categories, setCategories] = useState([]);
   const { colors } = useTheme();
+  const saveWarned = useRef(false);
 
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      const [stored, version] = await Promise.all([
-        loadItems(),
-        loadSchemaVersion(),
-      ]);
-      const migrate = version < CURRENT_SCHEMA_VERSION;
-      const normalized = uniqueIds(
-        Array.isArray(stored)
-          ? stored.map((raw) => normalizeItem(raw, migrate)).filter(Boolean)
-          : []
-      );
-
-      if (mounted) {
-        dispatch({
-          type: ACTIONS.SET_ITEMS,
-          payload: mergeDuplicates(normalized),
-        });
-      }
-      if (migrate) {
-        saveSchemaVersion(CURRENT_SCHEMA_VERSION);
-      }
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  // Persist whatever the reducer produced, so no caller can write a stale list.
-  useEffect(() => {
-    if (state.loading) {
+  // Reads everything saved. Custom categories come first: an item in one that
+  // isn't known yet would be filed under "Other".
+  const load = useCallback(async () => {
+    const list = setCustomCategories(await loadCategories());
+    setCategories(list);
+    const [stored, version] = await Promise.all([
+      loadItems(),
+      loadSchemaVersion(),
+      readPackColours(),
+    ]);
+    if (stored.status === "unreadable") {
+      dispatch({
+        type: ACTIONS.SET_ITEMS,
+        payload: { items: [], problem: { type: "unreadable" } },
+      });
       return;
     }
-    saveItems(state.items);
-  }, [state.items, state.loading]);
+    const migrate = version < CURRENT_SCHEMA_VERSION;
+    const items = prepareItems(stored.items, migrate);
+    dispatch({
+      type: ACTIONS.SET_ITEMS,
+      payload: {
+        items,
+        problem:
+          stored.status === "recovered"
+            ? { type: "recovered", count: items.length }
+            : null,
+      },
+    });
+    if (stored.status === "ok" && items.length > 0) {
+      saveSafeCopy(items);
+    }
+    if (migrate) {
+      saveSchemaVersion(CURRENT_SCHEMA_VERSION);
+    }
+  }, []);
 
-  const addItem = useCallback((itemData) => {
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  // Persist whatever the reducer produced, so no caller can write a stale list.
+  // Never over items that couldn't be read: an empty store then means "don't
+  // know", not "nothing".
+  const unreadable = state.problem?.type === "unreadable";
+  useEffect(() => {
+    if (state.loading || unreadable) {
+      return;
+    }
+    saveItems(state.items).then((saved) => {
+      if (!saved && !saveWarned.current) {
+        saveWarned.current = true;
+        Alert.alert(
+          "Couldn't save",
+          `Your latest changes couldn't be saved on this ${deviceName}. Check it has free space.`
+        );
+      } else if (saved) {
+        saveWarned.current = false;
+      }
+    });
+  }, [state.items, state.loading, unreadable]);
+
+  // A deleted item's photo is kept while Undo can still bring the item back:
+  // it goes once the offer has ended, and the item didn't come back.
+  const lastUndo = useRef(null);
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  useEffect(() => {
+    const previous = lastUndo.current;
+    lastUndo.current = state.undo;
+    if (
+      previous?.type === "delete" &&
+      previous !== state.undo &&
+      !state.items.some((item) => item.id === previous.item.id)
+    ) {
+      deleteImage(previous.item.imageUri);
+    }
+  }, [state.undo, state.items]);
+
+  // `announce`: say where the item went when that isn't obvious from where the
+  // person is (with none in stock it's on the Shopping tab, not the one they're on).
+  const addItem = useCallback((itemData, { announce = false } = {}) => {
     const now = new Date().toISOString();
     const quantity =
       typeof itemData.quantity === "number" && !Number.isNaN(itemData.quantity)
@@ -494,10 +158,15 @@ export function InventoryProvider({ children }) {
       quantity,
       unit: itemData.unit || QUANTITY_UNITS[0],
       openedPercent,
-      expiryDate: parseExpiry(itemData.expiryDate),
+      expiryDate: itemData.expiryDate ?? null,
+      expiryWanted: !!itemData.expiryDate,
       recurring: !!itemData.recurring,
       neverRecommend: false,
-      wanted: !!itemData.wanted,
+      // Adding something with none in stock means it has to be bought.
+      wanted: !!itemData.wanted || quantity <= 0,
+      snoozed: false,
+      openCovered: false,
+      ...cleanRestockRule(itemData),
       note: itemData.note ?? "",
       createdAt: now,
       updatedAt: now,
@@ -511,27 +180,59 @@ export function InventoryProvider({ children }) {
       ],
     };
 
-    dispatch({ type: ACTIONS.ADD_ITEM, payload: { candidate, now } });
+    dispatch({ type: ACTIONS.ADD_ITEM, payload: { candidate, now, announce } });
   }, []);
 
-  const updateItem = useCallback((id, changes = {}, historyEntry = null) => {
+  // `undoLabel`: offer this change back in the toast, with that text.
+  const updateItem = useCallback(
+    (id, changes = {}, historyEntry = null, undoLabel = null) => {
+      dispatch({
+        type: ACTIONS.UPDATE_ITEM,
+        payload: {
+          id,
+          changes,
+          historyEntry,
+          undoLabel,
+          now: new Date().toISOString(),
+        },
+      });
+    },
+    []
+  );
+
+  const stepItem = useCallback((id, dir) => {
     dispatch({
-      type: ACTIONS.UPDATE_ITEM,
-      payload: { id, changes, historyEntry, now: new Date().toISOString() },
+      type: ACTIONS.STEP_ITEM,
+      payload: { id, dir, now: new Date().toISOString() },
     });
   }, []);
 
-  // A ref mirror of state lets the undo callbacks stay stable while still
-  // seeing which item is waiting to be undone.
-  const stateRef = useRef(state);
-  stateRef.current = state;
+  const buyItem = useCallback((id, amount) => {
+    dispatch({
+      type: ACTIONS.BUY_ITEM,
+      payload: { id, amount, now: new Date().toISOString() },
+    });
+  }, []);
+
+  const mergeItems = useCallback((sourceId, targetId, changes) => {
+    // There's room for one photo. The other file would stay on disk forever.
+    const all = stateRef.current.items;
+    const source = all.find((item) => item.id === sourceId);
+    const target = all.find((item) => item.id === targetId);
+    if (source && target) {
+      const edited = { ...source, ...changes };
+      const kept = mergeRecords(target, edited).imageUri;
+      [source.imageUri, edited.imageUri, target.imageUri]
+        .filter((uri) => uri && uri !== kept)
+        .forEach(deleteImage);
+    }
+    dispatch({
+      type: ACTIONS.MERGE_ITEMS,
+      payload: { sourceId, targetId, changes, now: new Date().toISOString() },
+    });
+  }, []);
 
   const deleteItem = useCallback((id) => {
-    // A newer delete ends the previous undo window, so its photo can go.
-    const pending = stateRef.current.undo;
-    if (pending && pending.item.id !== id) {
-      deleteImage(pending.item.imageUri);
-    }
     dispatch({ type: ACTIONS.DELETE_ITEM, payload: id });
   }, []);
 
@@ -539,28 +240,109 @@ export function InventoryProvider({ children }) {
     dispatch({ type: ACTIONS.RESTORE_ITEM });
   }, []);
 
-  // Drops the pending undo for good and removes that item's photo.
   const clearUndo = useCallback(() => {
-    const pending = stateRef.current.undo;
-    if (pending) {
-      deleteImage(pending.item.imageUri);
-    }
     dispatch({ type: ACTIONS.CLEAR_UNDO });
   }, []);
 
-  // Swaps every item for the ones in a backup, migrated the same way stored
-  // data is on load.
-  const replaceAllItems = useCallback((rawItems, schemaVersion) => {
-    const migrate = schemaVersion < CURRENT_SCHEMA_VERSION;
-    const normalized = uniqueIds(
-      Array.isArray(rawItems)
-        ? rawItems.map((raw) => normalizeItem(raw, migrate)).filter(Boolean)
-        : []
-    );
-    const items = mergeDuplicates(normalized);
-    dispatch({ type: ACTIONS.REPLACE_ALL, payload: items });
-    return items.length;
+  const showNotice = useCallback((label) => {
+    dispatch({ type: ACTIONS.NOTICE, payload: label });
   }, []);
+
+  const clearProblem = useCallback(() => {
+    dispatch({ type: ACTIONS.CLEAR_PROBLEM });
+  }, []);
+
+  const applyCategories = useCallback((raw) => {
+    const list = setCustomCategories(raw);
+    setCategories(list);
+    saveCategories(list.map(({ label, room }) => ({ label, room })));
+    return list;
+  }, []);
+
+  // Returns the new category's label, or null when the name can't be used.
+  const addCategory = useCallback(
+    (label, room) => {
+      const name = label.trim();
+      const next = cleanCustomCategories([
+        ...getCustomCategories(),
+        { label: name, room },
+      ]);
+      if (next.length === getCustomCategories().length) {
+        return null;
+      }
+      applyCategories(next);
+      return name;
+    },
+    [applyCategories]
+  );
+
+  // The category's items move to "Other" in the same room.
+  const removeCategory = useCallback(
+    (label) => {
+      const now = new Date().toISOString();
+      stateRef.current.items
+        .filter((item) => item.category === label)
+        .forEach((item) => {
+          dispatch({
+            type: ACTIONS.UPDATE_ITEM,
+            payload: {
+              id: item.id,
+              changes: { category: "Other" },
+              historyEntry: { action: `Moved to Other (${label} was removed)` },
+              now,
+            },
+          });
+        });
+      applyCategories(getCustomCategories().filter((c) => c.label !== label));
+    },
+    [applyCategories]
+  );
+
+  // Swaps every item for the ones in a backup or the home server's copy,
+  // migrated the same way stored data is on load.
+  const replaceAllItems = useCallback(
+    (rawItems, schemaVersion, rawCategories) => {
+      if (Array.isArray(rawCategories)) {
+        applyCategories(rawCategories);
+      }
+      const migrate = schemaVersion < CURRENT_SCHEMA_VERSION;
+      const items = prepareItems(rawItems, migrate);
+      dispatch({ type: ACTIONS.REPLACE_ALL, payload: items });
+      return items.length;
+    },
+    [applyCategories]
+  );
+
+  // The server's copy, merged into the items as they stand by then.
+  const mergeServerItems = useCallback((base, theirs) => {
+    dispatch({ type: ACTIONS.MERGE_SERVER, payload: { base, theirs } });
+  }, []);
+
+  // True if it went on the list. Taking it off offers an Undo, as the X there does.
+  const toggleOnList = useCallback(
+    (id) => {
+      const item = stateRef.current.items.find((entry) => entry.id === id);
+      if (!item) {
+        return false;
+      }
+      if (isOnBuyList(item)) {
+        updateItem(
+          id,
+          takeOffList(item),
+          { action: "Taken off the shopping list" },
+          `${item.name} is off the list`
+        );
+        return false;
+      }
+      updateItem(
+        id,
+        { wanted: true, snoozed: false },
+        { action: "Added to the shopping list" }
+      );
+      return true;
+    },
+    [updateItem]
+  );
 
   const getItemById = useCallback(
     (id) => state.items.find((item) => item.id === id) || null,
@@ -572,25 +354,51 @@ export function InventoryProvider({ children }) {
       items: state.items,
       loading: state.loading,
       undo: state.undo,
+      problem: state.problem,
+      categories,
       addItem,
       updateItem,
+      stepItem,
+      buyItem,
+      toggleOnList,
+      mergeItems,
       deleteItem,
       undoDelete,
       clearUndo,
+      showNotice,
+      clearProblem,
       getItemById,
       replaceAllItems,
+      mergeServerItems,
+      applyCategories,
+      addCategory,
+      removeCategory,
+      reload: load,
     }),
     [
       state.items,
       state.loading,
       state.undo,
+      state.problem,
+      categories,
       addItem,
       updateItem,
+      stepItem,
+      buyItem,
+      toggleOnList,
+      mergeItems,
       deleteItem,
       undoDelete,
       clearUndo,
+      showNotice,
+      clearProblem,
       getItemById,
       replaceAllItems,
+      mergeServerItems,
+      applyCategories,
+      addCategory,
+      removeCategory,
+      load,
     ]
   );
 

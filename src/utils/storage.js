@@ -1,7 +1,19 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
+import { salvageItems } from "./inventoryLogic";
+
 const STORAGE_KEY = "xrnhome_items";
 const SCHEMA_VERSION_KEY = "xrnhome_schema_version";
+// A copy of the items from the last launch that read them fine, for the day the
+// main copy can't be read.
+const SAFE_COPY_KEY = "xrnhome_items_safe";
+// The unreadable text itself. Kept, never overwritten, so it can still be looked
+// at by hand.
+const DAMAGED_KEY = "xrnhome_items_damaged";
+const CATEGORIES_KEY = "xrnhome_categories";
+const CART_KEY = "xrnhome_cart";
+const REMINDERS_KEY = "xrnhome_reminders";
+const PACK_COLOURS_KEY = "xrnhome_pack_colours";
 export const THEME_KEY = "xrnhome_theme_mode";
 
 // The app used to be called PantryPal. Whatever it saved under the old keys
@@ -49,22 +61,53 @@ export const moveLegacyKeys = () => {
 // v2: quantity is the total and includes the opened unit.
 export const CURRENT_SCHEMA_VERSION = 2;
 
-export const loadItems = async () => {
-  await moveLegacyKeys();
+const readSafeCopy = async () => {
   try {
-    const raw = await AsyncStorage.getItem(STORAGE_KEY);
-    if (raw == null) {
-      return [];
-    }
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-    return parsed;
+    const parsed = JSON.parse(await AsyncStorage.getItem(SAFE_COPY_KEY));
+    return Array.isArray(parsed) ? parsed : [];
   } catch (error) {
-    console.error("Failed to load items from AsyncStorage:", error);
     return [];
   }
+};
+
+// { status, items }. "ok": read fine (or there's nothing saved yet). "recovered":
+// the saved list was damaged, and `items` is as much of it as could be got back.
+// "unreadable": nothing could be read, which says nothing about what's saved, so
+// the caller must not write over it.
+export const loadItems = async () => {
+  await moveLegacyKeys();
+  let raw;
+  try {
+    raw = await AsyncStorage.getItem(STORAGE_KEY);
+  } catch (error) {
+    console.error("Failed to load items from AsyncStorage:", error);
+    return { status: "unreadable", items: [] };
+  }
+  if (raw == null) {
+    return { status: "ok", items: [] };
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return { status: "ok", items: parsed };
+    }
+  } catch (error) {
+    console.error("The saved items are damaged:", error);
+  }
+
+  try {
+    if ((await AsyncStorage.getItem(DAMAGED_KEY)) == null) {
+      await AsyncStorage.setItem(DAMAGED_KEY, raw);
+    }
+  } catch (error) {
+    console.error("Failed to keep the damaged items:", error);
+  }
+  const salvaged = salvageItems(raw);
+  const safe = await readSafeCopy();
+  const items = safe.length > salvaged.length ? safe : salvaged;
+  return items.length > 0
+    ? { status: "recovered", items }
+    : { status: "unreadable", items: [] };
 };
 
 export const saveItems = async (items) => {
@@ -75,6 +118,14 @@ export const saveItems = async (items) => {
   } catch (error) {
     console.error("Failed to save items to AsyncStorage:", error);
     return false;
+  }
+};
+
+export const saveSafeCopy = async (items) => {
+  try {
+    await AsyncStorage.setItem(SAFE_COPY_KEY, JSON.stringify(items));
+  } catch (error) {
+    console.error("Failed to save the safe copy of the items:", error);
   }
 };
 
@@ -99,3 +150,35 @@ export const saveSchemaVersion = async (version) => {
     return false;
   }
 };
+
+const readJson = async (key, fallback) => {
+  try {
+    const raw = await AsyncStorage.getItem(key);
+    return raw == null ? fallback : JSON.parse(raw);
+  } catch (error) {
+    return fallback;
+  }
+};
+
+const writeJson = async (key, value) => {
+  try {
+    await AsyncStorage.setItem(key, JSON.stringify(value));
+  } catch (error) {
+    console.error(`Failed to save ${key}:`, error);
+  }
+};
+
+export const loadCategories = () => readJson(CATEGORIES_KEY, []);
+export const saveCategories = (list) => writeJson(CATEGORIES_KEY, list);
+
+// { photo file name: colour found in it, or null }, see packColourCache.js.
+export const loadPackColours = () => readJson(PACK_COLOURS_KEY, {});
+export const savePackColours = (colours) => writeJson(PACK_COLOURS_KEY, colours);
+
+// { at, entries: { itemId: { count, before } } }, the trip in progress.
+export const loadCart = () => readJson(CART_KEY, null);
+export const saveCart = (cart) => writeJson(CART_KEY, cart);
+
+// true, false, or null while the person hasn't been asked.
+export const loadRemindersSetting = () => readJson(REMINDERS_KEY, null);
+export const saveRemindersSetting = (value) => writeJson(REMINDERS_KEY, value);

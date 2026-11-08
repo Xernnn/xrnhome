@@ -57,15 +57,11 @@ export function ThemeProvider({ children }) {
   const isDark =
     mode === "system" ? systemScheme === "dark" : mode === "dark";
 
-  const toggleTheme = useCallback(() => {
-    setMode(isDark ? "light" : "dark");
-  }, [isDark, setMode]);
-
   const colors = isDark ? DARK_COLORS : LIGHT_COLORS;
 
   const value = useMemo(
-    () => ({ mode, isDark, colors, setMode, toggleTheme }),
-    [mode, isDark, colors, setMode, toggleTheme]
+    () => ({ mode, isDark, colors, setMode }),
+    [mode, isDark, colors, setMode]
   );
 
   return (
