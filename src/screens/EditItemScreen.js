@@ -9,7 +9,7 @@ import EmptyState from "../components/EmptyState";
 import { TextButton, TopBar } from "../components/ui";
 import { persistImage, deleteImage } from "../utils/images";
 import { haptics } from "../utils/haptics";
-import { findDuplicate } from "../utils/inventoryLogic";
+import { findDuplicate, formChanges } from "../utils/inventoryLogic";
 import { countText } from "../utils/constants";
 
 // Two records of one item can't stay apart: they'd be merged on the next launch
@@ -52,55 +52,36 @@ export default function EditItemScreen({ navigation, route }) {
     );
   }
 
-  const save = async (values, changed) => {
+  const save = async (values, changed, started) => {
     if (!changed) {
       navigation.goBack();
       return;
     }
-    // The form holds a copy from when it opened. A count it didn't touch stays as
-    // it is now, because a sync, or a click in the laptop's table beside the form,
-    // may have moved it since.
+    // Only what was changed here goes onto the item as it is now (formChanges).
     const current = getItemById(itemId) || existing;
-    const countEdited =
-      values.quantity !== existing.quantity ||
-      values.openedPercent !== existing.openedPercent;
-    const fields = countEdited
-      ? values
-      : { ...values, quantity: current.quantity, openedPercent: current.openedPercent };
+    const changes = formChanges(started, values, current);
+    const fields = { ...current, ...changes };
 
     const duplicate = findDuplicate(items, fields, itemId);
     if (duplicate && !(await askToMerge(fields, duplicate))) {
       return false;
     }
-    const previousImage = existing.imageUri;
-    const imageChanged = fields.imageUri !== previousImage;
-    const imageUri = imageChanged
-      ? await persistImage(fields.imageUri)
-      : fields.imageUri;
+    const imageChanged = "imageUri" in changes;
+    if (imageChanged) {
+      changes.imageUri = await persistImage(changes.imageUri);
+    }
 
     if (duplicate) {
-      mergeItems(itemId, duplicate.id, { ...fields, imageUri });
+      mergeItems(itemId, duplicate.id, changes);
       haptics.success();
       navigation.navigate("ItemDetail", { itemId: duplicate.id });
       return;
     }
 
-    updateItem(
-      itemId,
-      {
-        ...fields,
-        imageUri,
-        expiryWanted: !!fields.expiryDate,
-        neverRecommend: fields.recurring ? false : existing.neverRecommend,
-      },
-      {
-        action: "Updated item details",
-        quantityBefore: current.quantity,
-        quantityAfter: fields.quantity,
-      }
-    );
+    updateItem(itemId, changes, { action: "Updated item details" });
 
-    if (imageChanged && previousImage && previousImage !== imageUri) {
+    const previousImage = current.imageUri;
+    if (imageChanged && previousImage && previousImage !== changes.imageUri) {
       deleteImage(previousImage);
     }
     haptics.success();

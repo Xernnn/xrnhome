@@ -2,6 +2,7 @@ import {
   ACTIONS,
   computeStep,
   findDuplicate,
+  formChanges,
   initialState,
   mergeDuplicates,
   normalizeItem,
@@ -310,6 +311,65 @@ describe("merging", () => {
     expect(state.items).toHaveLength(1);
     expect(state.items[0]).toMatchObject({ id: "a", quantity: 5 });
     expect(state.items[0].note).toContain("from the market");
+  });
+});
+
+describe("saving the Edit form", () => {
+  // What ItemForm starts out holding for an item.
+  const formOf = (item) => ({
+    imageUri: item.imageUri,
+    name: item.name,
+    room: item.room,
+    category: item.category,
+    quantity: item.quantity,
+    unit: item.unit,
+    openedPercent: item.openedPercent,
+    expiryDate: item.expiryDate,
+    recurring: item.recurring,
+    restockUnits: 0,
+    restockPercent: null,
+    restockMatch: "all",
+    note: item.note,
+  });
+
+  it("writes only what was changed in it, over whatever happened meanwhile", () => {
+    let state = start(make({ quantity: 3 }));
+    const started = formOf(state.items[0]);
+    // While the form is open the laptop sets a date and uses one.
+    const expiryDate = dayFromNow(6);
+    state = update(state, "a", { expiryDate, expiryWanted: true, quantity: 2 });
+    const changes = formChanges(started, { ...started, note: "top shelf" }, state.items[0]);
+    expect(changes).toEqual({ note: "top shelf" });
+    state = update(state, "a", changes);
+    expect(state.items[0]).toMatchObject({ note: "top shelf", quantity: 2, expiryWanted: true });
+    expect(state.items[0].expiryDate).toBe(new Date(expiryDate).toISOString());
+  });
+
+  it("writes a group whole when one of its fields changed", () => {
+    const item = make({ recurring: true });
+    const started = { ...formOf(item), recurring: true };
+    expect(formChanges(started, { ...started, restockUnits: 2 }, item)).toEqual({
+      recurring: true,
+      restockUnits: 2,
+      restockPercent: null,
+      restockMatch: "all",
+    });
+    expect(
+      formChanges(started, { ...started, category: "Drinks" }, item)
+    ).toEqual({ room: "food", category: "Drinks" });
+  });
+
+  it("forgets a date turned off in it, and keeps 'needs a new date' when not touched", () => {
+    const dated = make({ expiryDate: dayFromNow(3) });
+    const started = formOf(dated);
+    expect(formChanges(started, { ...started, expiryDate: null }, dated)).toEqual({
+      expiryDate: null,
+      expiryWanted: false,
+    });
+    const ranOut = make({ quantity: 0, expiryWanted: true });
+    expect(formChanges(formOf(ranOut), { ...formOf(ranOut), note: "x" }, ranOut)).toEqual({
+      note: "x",
+    });
   });
 });
 

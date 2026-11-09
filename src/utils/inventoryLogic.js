@@ -1001,6 +1001,42 @@ export const takeOffList = (item) => ({
   snoozed: !!item.recurring,
 });
 
+// The Edit form's fields, in the groups that only mean something together (as
+// FIELD_GROUPS for a merge): changing one of them writes its whole group.
+const FORM_GROUPS = [
+  ["name"],
+  ["room", "category"],
+  ["imageUri"],
+  ["unit"],
+  ["note"],
+  ["quantity", "openedPercent"],
+  ["recurring", "restockUnits", "restockPercent", "restockMatch"],
+  ["expiryDate"],
+];
+
+// What saving the Edit form writes onto `current` (the item as it is now): the
+// groups changed in the form since it opened with `started`, and nothing else.
+// The form holds a copy from when it opened, and the rest of the item may have
+// moved on since (a sync, a click in the laptop's table beside the form), which
+// writing the whole copy back would undo, here and then on the other device too.
+export const formChanges = (started, values, current) => {
+  const changes = {};
+  FORM_GROUPS.forEach((group) => {
+    if (group.some((field) => !same(values[field], started[field]))) {
+      group.forEach((field) => {
+        changes[field] = values[field];
+      });
+    }
+  });
+  if ("expiryDate" in changes) {
+    changes.expiryWanted = !!changes.expiryDate;
+  }
+  if ((changes.recurring ?? current.recurring) && current.neverRecommend) {
+    changes.neverRecommend = false;
+  }
+  return changes;
+};
+
 const MAX_REMINDERS = 30;
 
 const nameList = (names) =>

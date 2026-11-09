@@ -10,6 +10,7 @@ import * as SecureStore from "expo-secure-store";
 import { ThemeProvider } from "../src/context/ThemeContext";
 import { InventoryProvider, useInventory } from "../src/context/InventoryContext";
 import { SyncProvider, useSync } from "../src/context/SyncContext";
+import EditItemScreen from "../src/screens/EditItemScreen";
 
 jest.mock("@react-native-async-storage/async-storage", () =>
   require("@react-native-async-storage/async-storage/jest/async-storage-mock")
@@ -35,6 +36,22 @@ jest.mock("expo-image-manipulator", () => ({}));
 jest.mock("expo-application", () => ({ nativeBuildVersion: "1" }));
 jest.mock("expo-intent-launcher", () => ({}));
 jest.mock("expo-network", () => ({}));
+jest.mock("expo-image-picker", () => ({}));
+jest.mock("expo-haptics", () => ({
+  impactAsync: jest.fn(async () => {}),
+  notificationAsync: jest.fn(async () => {}),
+  selectionAsync: jest.fn(async () => {}),
+  ImpactFeedbackStyle: {},
+  NotificationFeedbackType: {},
+}));
+jest.mock("@react-native-community/datetimepicker", () => ({
+  __esModule: true,
+  default: () => null,
+  DateTimePickerAndroid: { open: jest.fn() },
+}));
+jest.mock("react-native-safe-area-context", () =>
+  require("react-native-safe-area-context/jest/mock").default
+);
 
 const URL = "https://home.test/xrnhome";
 const ITEMS_KEY = "xrnhome_items";
@@ -79,9 +96,13 @@ const makeServer = () => {
 };
 
 let app;
+let showScreen;
+// Reads both providers for the tests, and shows whatever screen a test puts up.
 function Probe() {
   app = { inventory: useInventory(), sync: useSync() };
-  return null;
+  const [screen, setScreen] = React.useState(null);
+  showScreen = setScreen;
+  return screen;
 }
 
 let renderer = null;
@@ -228,5 +249,50 @@ describe("the person's own categories", () => {
       pets,
       baby,
     ]);
+  });
+});
+
+
+describe("the Edit form", () => {
+  it("keeps a date the laptop set while it was open, here and on the server", async () => {
+    await launch();
+    await add("Milk");
+    await wait(16000);
+    const navigation = {
+      goBack: jest.fn(),
+      navigate: jest.fn(),
+      popToTop: jest.fn(),
+      dispatch: jest.fn(),
+      addListener: jest.fn(() => () => {}),
+    };
+    const itemId = app.inventory.items[0].id;
+    await act(async () => {
+      showScreen(<EditItemScreen navigation={navigation} route={{ params: { itemId } }} />);
+    });
+
+    // The laptop gives Milk an expiry date, which comes down while the form is open.
+    const expiryDate = "2026-12-01T12:00:00.000Z";
+    const updatedAt = new Date(Date.now() + 1000).toISOString();
+    server.doc = {
+      ...server.doc,
+      items: server.doc.items.map((item) => ({ ...item, expiryDate, expiryWanted: true, updatedAt })),
+    };
+    server.version += 1;
+    await wait(31000);
+    expect(app.inventory.items[0].expiryDate).toBe(expiryDate);
+
+    // Here only the note changes.
+    const note = renderer.root.findByProps({ accessibilityLabel: "Note" });
+    await act(async () => note.props.onChangeText("top shelf"));
+    const [save] = renderer.root.findAll(
+      (node) => node.props.label === "Save" && typeof node.props.onPress === "function"
+    );
+    await act(async () => {
+      await save.props.onPress();
+    });
+    expect(navigation.goBack).toHaveBeenCalled();
+    await wait(16000);
+    expect(app.inventory.items[0]).toMatchObject({ note: "top shelf", expiryDate, expiryWanted: true });
+    expect(server.doc.items[0]).toMatchObject({ note: "top shelf", expiryDate, expiryWanted: true });
   });
 });

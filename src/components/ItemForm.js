@@ -140,6 +140,8 @@ export default function ItemForm({
 
   // Compared with how the form started rather than with the item: an item with
   // no rule of its own opens showing the default one, which isn't a change.
+  // Saving gets the starting values too, so it can write only what was changed.
+  const startValues = useRef(values);
   const current = JSON.stringify(values);
   const started = useRef(current);
   const dirty = useRef(false);
@@ -309,7 +311,7 @@ export default function ItemForm({
     leaving.current = true;
     try {
       // false: the person backed out, as from the question about merging.
-      if ((await onSave(values, dirty.current)) === false) {
+      if ((await onSave(values, dirty.current, startValues.current)) === false) {
         leaving.current = false;
         setSaving(false);
       }
