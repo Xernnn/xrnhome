@@ -134,6 +134,12 @@ const add = (name) =>
   act(async () => {
     app.inventory.addItem({ name, room: "food", category: "Cupboard", quantity: 1 });
   });
+// The app put away (another app, a laptop's lid or its tab hidden) or brought back.
+let appStateListeners;
+const appState = async (next) => {
+  AppState.currentState = next;
+  await act(async () => appStateListeners.forEach((listener) => listener(next)));
+};
 
 let server;
 beforeEach(async () => {
@@ -145,6 +151,11 @@ beforeEach(async () => {
     JSON.stringify({ url: URL, user: "sonn", password: "secret" })
   );
   AppState.currentState = "active";
+  appStateListeners = new Set();
+  AppState.addEventListener.mockImplementation((type, listener) => {
+    appStateListeners.add(listener);
+    return { remove: () => appStateListeners.delete(listener) };
+  });
   jest.spyOn(Alert, "alert").mockImplementation(() => {});
   jest.spyOn(console, "error").mockImplementation(() => {});
 });
@@ -294,5 +305,20 @@ describe("the Edit form", () => {
     await wait(16000);
     expect(app.inventory.items[0]).toMatchObject({ note: "top shelf", expiryDate, expiryWanted: true });
     expect(server.doc.items[0]).toMatchObject({ note: "top shelf", expiryDate, expiryWanted: true });
+  });
+});
+
+describe("leaving the app", () => {
+  // Jest runs as iOS, which like the laptop isn't Android.
+  it("sends a change that was waiting straight away, on any platform", async () => {
+    await launch();
+    await wait(2000);
+    await add("Milk");
+    await wait(1000);
+    expect(server.puts).toBe(0);
+    await appState("background");
+    await wait(0);
+    expect(server.puts).toBe(1);
+    expect(server.doc.items.map((item) => item.name)).toEqual(["Milk"]);
   });
 });

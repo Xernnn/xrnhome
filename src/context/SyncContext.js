@@ -522,24 +522,21 @@ export function SyncProvider({ children }) {
     if (!ready || !server || !updatesSupported) return undefined;
     const first = setTimeout(() => checkForUpdate(), 4000);
     const sub = AppState.addEventListener("change", (next) => {
-      if (next === "active") {
-        if (Date.now() - lastUpdateCheck.current > UPDATE_EVERY_MS) {
-          checkForUpdate();
-        }
-      } else if (next === "background" && timer.current) {
-        clearTimeout(timer.current);
-        timer.current = null;
-        push();
+      if (next === "active" && Date.now() - lastUpdateCheck.current > UPDATE_EVERY_MS) {
+        checkForUpdate();
       }
     });
     return () => {
       clearTimeout(first);
       sub.remove();
     };
-  }, [ready, server, checkForUpdate, push, schedulePush]);
+  }, [ready, server, checkForUpdate]);
 
   // The other device's changes: on opening, on coming back, and every so often
-  // while the app is in front. An unchanged server answers in a few bytes.
+  // while the app is in front. An unchanged server answers in a few bytes. A
+  // change still waiting to go up goes as soon as the app is put away, on every
+  // platform: a laptop's lid can shut before the delay is up, and its photo is on
+  // the server already, unnamed, until the item that names it gets there.
   useEffect(() => {
     if (!ready || !server) return undefined;
     const check = () => {
@@ -555,6 +552,10 @@ export function SyncProvider({ children }) {
     const sub = AppState.addEventListener("change", (next) => {
       if (next === "active") {
         check();
+      } else if (next === "background" && timer.current) {
+        clearTimeout(timer.current);
+        timer.current = null;
+        push();
       }
     });
     return () => {

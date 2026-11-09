@@ -201,6 +201,19 @@ class SyncServerTest(unittest.TestCase):
         srv.prune_photos("sonn", force=True)
         self.assertEqual(["kept.jpg", "new.jpg"], sorted(os.listdir(folder)))
 
+    def test_a_photo_waits_for_the_item_that_names_it(self):
+        # The laptop sends a photo as it's picked, and the item a little later. Shut
+        # in between, it can be away for days before the item follows.
+        folder = os.path.join(self.data, "users", "sonn", "photos")
+        self.call("PUT", "/photos/waiting.jpg", b"x", raw=True)
+        days_ago = time.time() - 3 * 86400
+        os.utime(os.path.join(folder, "waiting.jpg"), (days_ago, days_ago))
+        self.call("PUT", "/state", snapshot("Milk"), {"If-Match": '"0"'})
+        srv.prune_photos("sonn", force=True)
+        self.assertEqual(["waiting.jpg"], os.listdir(folder))
+        self.call("PUT", "/state", snapshot("Milk", photo="waiting.jpg"), {"If-Match": '"1"'})
+        self.assertEqual(200, self.call("GET", "/photos/waiting.jpg")[0])
+
 
 if __name__ == "__main__":
     unittest.main()

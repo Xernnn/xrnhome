@@ -29,7 +29,9 @@ sync password.
                               with the app's own requests, and nothing has to store a password
 
 Every write keeps the copy it replaces: the last KEEP_VERSIONS of them in history/, and the
-first of each day in daily/ for KEEP_DAYS. A photo goes once none of those name it any more.
+first of each day in daily/ for KEEP_DAYS. A photo goes once none of those name it any more, and
+it has been here for KEEP_DAYS: the laptop sends a photo as it's picked and the item after, so a
+photo nothing names yet may be one whose item is still waiting on a laptop that was shut.
 
     python3 xrnhome-sync.py --data ~/xrnhome-sync/data --users ~/.config/xrn-sync/users
 """
@@ -55,7 +57,7 @@ FAIL_WINDOW_S = 15 * 60
 KEEP_VERSIONS = 20
 KEEP_DAYS = 60
 PRUNE_EVERY_S = 600  # photos are swept at most this often per user
-PHOTO_GRACE_S = 86400  # a photo this new stays even if nothing names it yet
+PHOTO_GRACE_S = KEEP_DAYS * 86400  # a photo this new stays even if nothing names it yet
 PREFIX = "/xrnhome"
 USER_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 # The same rule as the app's isSafePhotoName: a plain file name, no path, no leading dot.
