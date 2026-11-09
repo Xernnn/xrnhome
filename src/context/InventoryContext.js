@@ -10,6 +10,7 @@ import React, {
 } from "react";
 import { View, ActivityIndicator, StyleSheet, Alert } from "react-native";
 import {
+  clearRecoveredMark,
   loadCategories,
   loadItems,
   saveCategories,
@@ -114,6 +115,22 @@ export function InventoryProvider({ children }) {
       }
     });
   }, [state.items, state.loading, unreadable]);
+
+  // A recovered list stays one from launch to launch (storage.js keeps a note of
+  // it) until the problem goes: the person has answered, or other items took the
+  // list's place.
+  const hadProblem = useRef(false);
+  useEffect(() => {
+    if (state.loading) {
+      return;
+    }
+    if (state.problem) {
+      hadProblem.current = true;
+    } else if (hadProblem.current) {
+      hadProblem.current = false;
+      clearRecoveredMark();
+    }
+  }, [state.problem, state.loading]);
 
   // A deleted item's photo is kept while Undo can still bring the item back:
   // it goes once the offer has ended, and the item didn't come back.

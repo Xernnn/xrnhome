@@ -1,6 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-import { loadItems, saveItems } from "../src/utils/storage";
+import { clearRecoveredMark, loadItems, saveItems } from "../src/utils/storage";
 
 jest.mock("@react-native-async-storage/async-storage", () =>
   require("@react-native-async-storage/async-storage/jest/async-storage-mock")
@@ -44,6 +44,17 @@ describe("reading the saved items", () => {
     const result = await loadItems();
     expect(result.status).toBe("recovered");
     expect(result.items).toHaveLength(2);
+  });
+
+  it("still calls a recovered list recovered on the next launch, until it's dealt with", async () => {
+    const text = JSON.stringify([{ id: "1" }, { id: "2" }, { id: "3" }]);
+    await AsyncStorage.setItem(KEY, text.slice(0, text.length - 5));
+    const { items } = await loadItems();
+    // The app saves what came back over the damaged copy straight away.
+    await saveItems(items);
+    expect(await loadItems()).toEqual({ status: "recovered", items });
+    await clearRecoveredMark();
+    expect(await loadItems()).toEqual({ status: "ok", items });
   });
 
   it("calls it unreadable rather than empty when nothing can be got back", async () => {

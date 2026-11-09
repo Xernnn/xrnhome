@@ -10,6 +10,12 @@ const SAFE_COPY_KEY = "xrnhome_items_safe";
 // The unreadable text itself. Kept, never overwritten, so it can still be looked
 // at by hand.
 const DAMAGED_KEY = "xrnhome_items_damaged";
+// There from the launch that had to recover the items until the person has dealt
+// with what came back. The recovered list is saved over the main copy at once, so
+// that what's done next isn't lost too; without this the next launch would read
+// it as whole, and the next sync would tell the other devices that the items it's
+// missing were deleted.
+const RECOVERED_KEY = "xrnhome_items_recovered";
 const CATEGORIES_KEY = "xrnhome_categories";
 const CART_KEY = "xrnhome_cart";
 const REMINDERS_KEY = "xrnhome_reminders";
@@ -70,8 +76,37 @@ const readSafeCopy = async () => {
   }
 };
 
+// Whether a recovered list is still waiting for the person. When that can't be
+// read it counts as yes: asking once too often costs a tap, not the items.
+const stillRecovered = async () => {
+  try {
+    return (await AsyncStorage.getItem(RECOVERED_KEY)) != null;
+  } catch (error) {
+    return true;
+  }
+};
+
+const markRecovered = async () => {
+  try {
+    await AsyncStorage.setItem(RECOVERED_KEY, new Date().toISOString());
+  } catch (error) {
+    console.error("Failed to note that the items were recovered:", error);
+  }
+};
+
+// The person has dealt with the recovered list: kept it, or put other items in
+// its place.
+export const clearRecoveredMark = async () => {
+  try {
+    await AsyncStorage.removeItem(RECOVERED_KEY);
+  } catch (error) {
+    console.error("Failed to clear the recovered-items note:", error);
+  }
+};
+
 // { status, items }. "ok": read fine (or there's nothing saved yet). "recovered":
-// the saved list was damaged, and `items` is as much of it as could be got back.
+// the saved list was damaged, on this launch or on one since which nobody has
+// dealt with it, and `items` is as much of it as could be got back.
 // "unreadable": nothing could be read, which says nothing about what's saved, so
 // the caller must not write over it.
 export const loadItems = async () => {
@@ -89,7 +124,7 @@ export const loadItems = async () => {
   try {
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
-      return { status: "ok", items: parsed };
+      return { status: (await stillRecovered()) ? "recovered" : "ok", items: parsed };
     }
   } catch (error) {
     console.error("The saved items are damaged:", error);
@@ -105,9 +140,12 @@ export const loadItems = async () => {
   const salvaged = salvageItems(raw);
   const safe = await readSafeCopy();
   const items = safe.length > salvaged.length ? safe : salvaged;
-  return items.length > 0
-    ? { status: "recovered", items }
-    : { status: "unreadable", items: [] };
+  if (items.length === 0) {
+    return { status: "unreadable", items: [] };
+  }
+  // Before the caller can save the recovered list over the damaged one.
+  await markRecovered();
+  return { status: "recovered", items };
 };
 
 export const saveItems = async (items) => {
