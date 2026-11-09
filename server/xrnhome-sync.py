@@ -52,7 +52,7 @@ MAX_BODY = 8 * 1024 * 1024
 MAX_PHOTO = 15 * 1024 * 1024
 FAIL_DELAY_S = 2  # after a wrong password, as Radicale does
 AUTH_CACHE_S = 600  # a bcrypt check costs ~0.3s on a phone; don't pay it per request
-FAIL_LIMIT = 10  # wrong logins from one address within FAIL_WINDOW_S, then 429 until they age out
+FAIL_LIMIT = 10  # different wrong logins from one address within FAIL_WINDOW_S, then 429 until they age out
 FAIL_WINDOW_S = 15 * 60
 KEEP_VERSIONS = 20
 KEEP_DAYS = 60
@@ -112,7 +112,7 @@ lock = threading.Lock()  # state.json, history/ and daily/
 photo_lock = threading.Lock()
 auth_cache = {}  # sha256(user:password) -> (user, expires, users-file mtime)
 fail_lock = threading.Lock()
-failures = {}  # client address -> monotonic times of its recent wrong logins
+failures = {}  # client address -> {sha256 of a wrong Authorization: monotonic time it last came}
 pruned = {}  # user -> time.monotonic() of the last photo sweep
 
 
@@ -165,7 +165,7 @@ def client_address(handler):
 def locked_out(addr):
     now = time.monotonic()
     with fail_lock:
-        recent = [t for t in failures.get(addr, ()) if now - t < FAIL_WINDOW_S]
+        recent = {k: t for k, t in failures.get(addr, {}).items() if now - t < FAIL_WINDOW_S}
         if recent:
             failures[addr] = recent
         else:
@@ -173,13 +173,17 @@ def locked_out(addr):
         return len(recent) >= FAIL_LIMIT
 
 
-def note_failure(addr):
+def note_failure(addr, header):
+    """Counts a wrong login against the address. The same one again counts once: that's a device
+    still sending the password from before it was changed, not someone guessing, and counting each
+    of its tries would lock the address out, which behind Funnel can be the whole household's."""
     now = time.monotonic()
+    key = hashlib.sha256(header.encode()).hexdigest()
     with fail_lock:
         if len(failures) > 10000:  # a flood from many addresses: forget the stale ones
-            for a in [a for a, ts in failures.items() if now - ts[-1] >= FAIL_WINDOW_S]:
+            for a in [a for a, ts in failures.items() if now - max(ts.values(), default=0) >= FAIL_WINDOW_S]:
                 del failures[a]
-        failures.setdefault(addr, []).append(now)
+        failures.setdefault(addr, {})[key] = now
 
 
 def user_dir(user, *parts):
@@ -336,7 +340,7 @@ class Handler(BaseHTTPRequestHandler):
         user = check_login(self.headers.get("Authorization"))
         if not user:
             if self.headers.get("Authorization"):
-                note_failure(addr)
+                note_failure(addr, self.headers.get("Authorization"))
             time.sleep(FAIL_DELAY_S)
             self.send(401, "login required", headers={"WWW-Authenticate": 'Basic realm="xrnhome"'})
             return None

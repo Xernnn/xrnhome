@@ -157,9 +157,20 @@ class SyncServerTest(unittest.TestCase):
     def test_wrong_passwords_lock_the_address_out(self):
         srv.FAIL_LIMIT = 3
         try:
-            for _ in range(3):
-                self.assertEqual(401, self.call("GET", "/state", password="nope")[0])
+            for wrong in ("nope", "nope2", "nope3"):
+                self.assertEqual(401, self.call("GET", "/state", password=wrong)[0])
             self.assertEqual(429, self.call("GET", "/state")[0])
+        finally:
+            srv.FAIL_LIMIT = 10
+
+    def test_an_old_password_sent_again_and_again_counts_once(self):
+        # A device that still has the login from before the password changed isn't
+        # someone guessing, and the address it locks out is everyone's behind Funnel.
+        srv.FAIL_LIMIT = 3
+        try:
+            for _ in range(10):
+                self.assertEqual(401, self.call("GET", "/state", password="old")[0])
+            self.assertEqual(200, self.call("GET", "/state")[0])
         finally:
             srv.FAIL_LIMIT = 10
 

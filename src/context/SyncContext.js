@@ -66,11 +66,27 @@ const CHECK_EVERY_MS = 30000; // for the other device's changes, while the app i
 const MAX_ROUNDS = 5;
 const UPDATE_EVERY_MS = 6 * 3600 * 1000;
 const ASKED_KEY = "xrnhome_update_asked"; // the build we last offered to install
+// How long the server keeps an address locked out after too many wrong passwords
+// (FAIL_WINDOW_S in server/xrnhome-sync.py), as its 429 says.
+const LOCKOUT_MS = 15 * 60 * 1000;
 
 const SyncContext = createContext(null);
 
 const messageOf = (error) =>
   error instanceof ServerError ? error.message : error?.message || failureText(0);
+
+// A login the server turned down isn't tried again by a timer: every try is one
+// more wrong password against the address, which the server then locks out, and
+// behind Tailscale Funnel that address can be the whole household's. After a 401
+// it waits for the person (Sync now, connecting again); after a 429 it waits for
+// the lockout to pass. `refusalOf` is what a failed request says about that, or
+// null; `heldBack`, whether a timer must leave the server alone.
+const refusalOf = (error) => {
+  const code = error instanceof ServerError ? error.status : 0;
+  return code === 401 || code === 429 ? { code, until: Date.now() + LOCKOUT_MS } : null;
+};
+const heldBack = (refusal) =>
+  !!refusal && (refusal.code === 401 || Date.now() < refusal.until);
 
 const ago = (iso) => {
   const ms = Date.now() - new Date(iso).getTime();
@@ -140,6 +156,7 @@ export function SyncProvider({ children }) {
   const pushing = useRef(false);
   const restoring = useRef(false);
   const again = useRef(false);
+  const refused = useRef(null); // see refusalOf
   const skipNext = useRef(false);
   const lastUpdateCheck = useRef(0);
   const updateBusy = useRef(false);
@@ -189,6 +206,7 @@ export function SyncProvider({ children }) {
         serverSavedAt: copy.savedAt,
       });
     } catch (error) {
+      refused.current = refusalOf(error) || refused.current;
       setStatus((prev) => ({ ...prev, state: "conflict", reason }));
     }
   }, []);
@@ -206,6 +224,7 @@ export function SyncProvider({ children }) {
       );
     } catch (error) {
       // Offline: what's on screen is the best there is.
+      refused.current = refusalOf(error) || refused.current;
     }
   }, []);
 
@@ -322,10 +341,17 @@ export function SyncProvider({ children }) {
 
   // `base`: nothing for a routine sync, null to send this device's items as a
   // first sync, "*" to replace the server's copy, "merge" to keep both sides.
+  // `asked`: the person asked for this routine sync (Sync now), so a login the
+  // server turned down gets another try, as it does for every other `base`.
   const push = useCallback(
-    async (base) => {
+    async (base, asked = false) => {
       const target = serverRef.current;
       if (!target) return;
+      if (asked || base !== undefined) {
+        refused.current = null;
+      } else if (heldBack(refused.current)) {
+        return;
+      }
       if (base === undefined && statusRef.current.state === "conflict") return;
       if (pushing.current || restoring.current) {
         again.current = true;
@@ -361,6 +387,7 @@ export function SyncProvider({ children }) {
                 }
           );
         } catch (error) {
+          refused.current = refusalOf(error) || refused.current;
           setStatus({ state: "error", message: messageOf(error) });
         }
         return;
@@ -398,6 +425,7 @@ export function SyncProvider({ children }) {
           clearProblem();
         }
       } catch (error) {
+        refused.current = refusalOf(error) || refused.current;
         setStatus({ state: "error", message: messageOf(error) });
       } finally {
         pushing.current = false;
@@ -471,6 +499,11 @@ export function SyncProvider({ children }) {
     async ({ manual = false } = {}) => {
       const target = serverRef.current;
       if (!target || !updatesSupported || updateBusy.current) return;
+      if (manual) {
+        refused.current = null;
+      } else if (heldBack(refused.current)) {
+        return;
+      }
       updateBusy.current = true;
       lastUpdateCheck.current = Date.now();
       setUpdate({ state: "checking" });
@@ -498,6 +531,7 @@ export function SyncProvider({ children }) {
           offerInstall(info, file);
         }
       } catch (error) {
+        refused.current = refusalOf(error) || refused.current;
         setUpdate({ state: "error", message: messageOf(error) });
       } finally {
         updateBusy.current = false;
@@ -541,7 +575,7 @@ export function SyncProvider({ children }) {
   useEffect(() => {
     if (!ready || !server) return undefined;
     const check = () => {
-      if (AppState.currentState !== "active") return;
+      if (AppState.currentState !== "active" || heldBack(refused.current)) return;
       if (statusRef.current.state === "conflict") {
         refreshConflict(serverRef.current);
       } else {
@@ -606,13 +640,14 @@ export function SyncProvider({ children }) {
     await clearServer();
     await clearSyncMeta();
     baseRef.current = null;
+    refused.current = null;
     setServer(null);
     setMeta({ version: null, syncedAt: null, hash: null });
     setStatus({ state: "off" });
     setUpdate({ state: "idle" });
   }, []);
 
-  const syncNow = useCallback(() => push(), [push]);
+  const syncNow = useCallback(() => push(undefined, true), [push]);
 
   // Keeps everything from both sides, for a device whose items aren't built on the
   // server's copy (a phone connecting with items of its own, say). With no base,
@@ -639,6 +674,7 @@ export function SyncProvider({ children }) {
     const before = statusRef.current;
     setStatus((prev) => ({ ...prev, state: "syncing" }));
     restoring.current = true;
+    refused.current = null;
     if (timer.current) {
       clearTimeout(timer.current);
       timer.current = null;
@@ -651,6 +687,7 @@ export function SyncProvider({ children }) {
       try {
         copy = await fetchServerCopy(target);
       } catch (error) {
+        refused.current = refusalOf(error) || refused.current;
         setStatus({ state: "error", message: messageOf(error) });
         throw error;
       }
@@ -679,6 +716,7 @@ export function SyncProvider({ children }) {
         setStatus({ state: "idle" });
         return { count, missing: local.missing };
       } catch (error) {
+        refused.current = refusalOf(error) || refused.current;
         setStatus(before);
         throw new Error(
           `${messageOf(error)} Nothing on this ${deviceName} changed, so you can try again.`

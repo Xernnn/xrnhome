@@ -360,3 +360,39 @@ describe("restoring the server's copy", () => {
     expect(app.inventory.items.map((item) => item.name)).toEqual(["Milk"]);
   });
 });
+
+describe("a login the server turns down", () => {
+  it("isn't tried again on a timer, only when the person asks", async () => {
+    server.refuse = 401;
+    await launch();
+    await wait(5 * 60000);
+    expect(server.fetch).toHaveBeenCalledTimes(1);
+    expect(app.sync.status).toMatchObject({
+      state: "error",
+      message: "Wrong user name or password.",
+    });
+    // A change made meanwhile waits as well.
+    await add("Milk");
+    await wait(60000);
+    expect(server.fetch).toHaveBeenCalledTimes(1);
+
+    // The login is put right on the server, and the person taps Sync now.
+    server.refuse = 0;
+    await act(async () => {
+      await app.sync.syncNow();
+    });
+    expect(server.doc.items.map((item) => item.name)).toEqual(["Milk"]);
+    expect(app.sync.status.state).toBe("idle");
+  });
+
+  it("waits out a lockout before trying again by itself", async () => {
+    server.refuse = 429;
+    await launch();
+    await wait(10 * 60000);
+    expect(server.fetch).toHaveBeenCalledTimes(1);
+    server.refuse = 0;
+    await wait(6 * 60000);
+    expect(server.fetch.mock.calls.length).toBeGreaterThan(1);
+    expect(app.sync.status.state).toBe("idle");
+  });
+});
