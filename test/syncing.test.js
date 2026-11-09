@@ -5,6 +5,7 @@ import React from "react";
 import TestRenderer, { act } from "react-test-renderer";
 import { Alert, AppState } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as FileSystem from "expo-file-system/legacy";
 import * as SecureStore from "expo-secure-store";
 
 import { ThemeProvider } from "../src/context/ThemeContext";
@@ -151,6 +152,7 @@ beforeEach(async () => {
     JSON.stringify({ url: URL, user: "sonn", password: "secret" })
   );
   AppState.currentState = "active";
+  FileSystem.downloadAsync.mockImplementation(async () => ({ status: 404 }));
   appStateListeners = new Set();
   AppState.addEventListener.mockImplementation((type, listener) => {
     appStateListeners.add(listener);
@@ -320,5 +322,41 @@ describe("leaving the app", () => {
     await wait(0);
     expect(server.puts).toBe(1);
     expect(server.doc.items.map((item) => item.name)).toEqual(["Milk"]);
+  });
+});
+
+describe("restoring the server's copy", () => {
+  it("isn't undone by a push that was waiting when it began", async () => {
+    await launch();
+    await add("Milk");
+    await wait(16000);
+    // The laptop gives Milk a photo, and that copy comes down here.
+    server.doc = {
+      ...server.doc,
+      items: server.doc.items.map((item) => ({ ...item, photo: "milk.jpg" })),
+    };
+    server.version += 1;
+    await wait(31000);
+
+    // Bread is added here, and then the person picks the server's copy instead,
+    // whose photo is slow to download.
+    await add("Bread");
+    FileSystem.downloadAsync.mockImplementation(
+      () => new Promise((resolve) => setTimeout(() => resolve({ status: 200 }), 30000))
+    );
+    const puts = server.puts;
+    let restoring;
+    await act(async () => {
+      restoring = app.sync.restore();
+    });
+    await wait(20000);
+    expect(server.puts).toBe(puts);
+    await wait(20000);
+    await act(async () => {
+      await restoring;
+    });
+    await wait(2 * 60000);
+    expect(server.doc.items.map((item) => item.name)).toEqual(["Milk"]);
+    expect(app.inventory.items.map((item) => item.name)).toEqual(["Milk"]);
   });
 });

@@ -138,6 +138,7 @@ export function SyncProvider({ children }) {
   const timer = useRef(null);
   const restoreRef = useRef(null);
   const pushing = useRef(false);
+  const restoring = useRef(false);
   const again = useRef(false);
   const skipNext = useRef(false);
   const lastUpdateCheck = useRef(0);
@@ -326,7 +327,7 @@ export function SyncProvider({ children }) {
       const target = serverRef.current;
       if (!target) return;
       if (base === undefined && statusRef.current.state === "conflict") return;
-      if (pushing.current) {
+      if (pushing.current || restoring.current) {
         again.current = true;
         return;
       }
@@ -627,49 +628,70 @@ export function SyncProvider({ children }) {
   // Puts the server's copy on this device, photos and all, in place of what's
   // here. All or nothing: the photos come first, and the items are only swapped
   // once they're all here. Returns { count, missing }.
+  //
+  // Nothing of what it replaces may reach the server once it has read the copy,
+  // or the next sync would bring that back. So a push waiting to go is called
+  // off, one under way is waited for, and none starts until this is done: one
+  // asked for meanwhile goes after, with the restored items.
   const restore = useCallback(async () => {
     const target = serverRef.current;
     if (!target) return { count: 0, missing: 0 };
     const before = statusRef.current;
     setStatus((prev) => ({ ...prev, state: "syncing" }));
-    let copy;
-    try {
-      copy = await fetchServerCopy(target);
-    } catch (error) {
-      setStatus({ state: "error", message: messageOf(error) });
-      throw error;
-    }
-    // An empty copy would only empty this device.
-    if (copy.items.length === 0) {
-      setStatus(before);
-      throw new Error("The home server has no items to restore.");
+    restoring.current = true;
+    if (timer.current) {
+      clearTimeout(timer.current);
+      timer.current = null;
     }
     try {
-      const local = await withLocalPhotos(target, copy.items);
-      skipNext.current = true;
-      const count = replaceAllItems(local.items, copy.schemaVersion, copy.categories);
-      const restored = prepareItems(
-        local.items,
-        copy.schemaVersion < CURRENT_SCHEMA_VERSION
-      );
-      const own = categoryList(copy.categories);
-      await storeSynced(
-        {
-          version: copy.version,
-          syncedAt: new Date().toISOString(),
-          hash: itemsHash(restored, own),
-        },
-        { items: restored, categories: own }
-      );
-      setStatus({ state: "idle" });
-      return { count, missing: local.missing };
-    } catch (error) {
-      setStatus(before);
-      throw new Error(
-        `${messageOf(error)} Nothing on this ${deviceName} changed, so you can try again.`
-      );
+      while (pushing.current) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      let copy;
+      try {
+        copy = await fetchServerCopy(target);
+      } catch (error) {
+        setStatus({ state: "error", message: messageOf(error) });
+        throw error;
+      }
+      // An empty copy would only empty this device.
+      if (copy.items.length === 0) {
+        setStatus(before);
+        throw new Error("The home server has no items to restore.");
+      }
+      try {
+        const local = await withLocalPhotos(target, copy.items);
+        skipNext.current = true;
+        const count = replaceAllItems(local.items, copy.schemaVersion, copy.categories);
+        const restored = prepareItems(
+          local.items,
+          copy.schemaVersion < CURRENT_SCHEMA_VERSION
+        );
+        const own = categoryList(copy.categories);
+        await storeSynced(
+          {
+            version: copy.version,
+            syncedAt: new Date().toISOString(),
+            hash: itemsHash(restored, own),
+          },
+          { items: restored, categories: own }
+        );
+        setStatus({ state: "idle" });
+        return { count, missing: local.missing };
+      } catch (error) {
+        setStatus(before);
+        throw new Error(
+          `${messageOf(error)} Nothing on this ${deviceName} changed, so you can try again.`
+        );
+      }
+    } finally {
+      restoring.current = false;
+      if (again.current) {
+        again.current = false;
+        push();
+      }
     }
-  }, [replaceAllItems, storeSynced]);
+  }, [push, replaceAllItems, storeSynced]);
   restoreRef.current = restore;
 
   // Sends this device's items over whatever the server has. `allowEmpty` is for
