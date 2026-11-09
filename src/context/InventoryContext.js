@@ -133,7 +133,8 @@ export function InventoryProvider({ children }) {
   }, [state.problem, state.loading]);
 
   // A deleted item's photo is kept while Undo can still bring the item back:
-  // it goes once the offer has ended, and the item didn't come back.
+  // it goes once the offer has ended, and the item didn't come back, nor did a
+  // record that a sync folded it into and that has its photo now.
   const lastUndo = useRef(null);
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -143,7 +144,9 @@ export function InventoryProvider({ children }) {
     if (
       previous?.type === "delete" &&
       previous !== state.undo &&
-      !state.items.some((item) => item.id === previous.item.id)
+      !state.items.some(
+        (item) => item.id === previous.item.id || item.imageUri === previous.item.imageUri
+      )
     ) {
       deleteImage(previous.item.imageUri);
     }

@@ -929,6 +929,16 @@ export function reducer(state, action) {
         return state;
       }
       if (undo.type === "delete") {
+        // A sync may have brought it back meanwhile (an edit on the other device
+        // outlives a deletion), as itself or folded into another record. A second
+        // copy would be folded into the first on the next launch, its stock
+        // counted twice, so then it's back already.
+        const back = state.items.some(
+          (item) => item.id === undo.item.id || (item.mergedFrom || []).includes(undo.item.id)
+        );
+        if (back) {
+          return { ...state, undo: null };
+        }
         const items = [...state.items];
         items.splice(Math.max(0, Math.min(undo.index, items.length)), 0, undo.item);
         return { ...state, items, undo: null };

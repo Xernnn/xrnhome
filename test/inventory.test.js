@@ -94,6 +94,28 @@ describe("counting", () => {
     state = reducer(state, { type: ACTIONS.RESTORE_ITEM });
     expect(state.items[0]).toMatchObject({ quantity: 2, openedPercent: 10 });
   });
+
+  it("doesn't let Undo bring back a second copy of an item a sync brought back", () => {
+    const milk = make({ quantity: 3 });
+    let state = start(milk);
+    state = reducer(state, { type: ACTIONS.DELETE_ITEM, payload: "a" });
+    // The laptop had used one meanwhile, and that edit outlives the deletion.
+    const theirs = [{ ...milk, quantity: 2, updatedAt: NOW }];
+    state = reducer(state, { type: ACTIONS.MERGE_SERVER, payload: { base: [milk], theirs } });
+    state = reducer(state, { type: ACTIONS.RESTORE_ITEM });
+    expect(state.items).toHaveLength(1);
+    expect(state.items[0].quantity).toBe(2);
+    expect(state.undo).toBeNull();
+    expect(prepareItems(state.items, false)[0].quantity).toBe(2);
+  });
+
+  it("nor one that's back folded into another record", () => {
+    let state = start(make({ quantity: 3 }));
+    state = reducer(state, { type: ACTIONS.DELETE_ITEM, payload: "a" });
+    state = { ...state, items: [make({ id: "b", quantity: 5, mergedFrom: ["a"] })] };
+    state = reducer(state, { type: ACTIONS.RESTORE_ITEM });
+    expect(state.items.map((item) => item.id)).toEqual(["b"]);
+  });
 });
 
 describe("restock rule", () => {
