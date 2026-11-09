@@ -34,7 +34,7 @@ import {
   TopBar,
   XSwitch,
 } from "./ui";
-import { pickDate } from "../utils/datePicker";
+import { middayOf, pickDate } from "../utils/datePicker";
 import {
   OPENED_STEP,
   QUANTITY_UNITS,
@@ -105,8 +105,9 @@ export default function ItemForm({
   const [restockMatch, setRestockMatch] = useState(startRule.match);
   const [note, setNote] = useState(initial.note || "");
   const [expiryEnabled, setExpiryEnabled] = useState(!!initial.expiryDate);
+  // A new date is a day, kept at midday (see middayOf); one the item has stays.
   const [expiryDate, setExpiryDate] = useState(
-    initial.expiryDate ? new Date(initial.expiryDate) : new Date()
+    initial.expiryDate ? new Date(initial.expiryDate) : middayOf(new Date())
   );
   const [iosPickerOpen, setIosPickerOpen] = useState(false);
   const [photoSheet, setPhotoSheet] = useState(false);
@@ -224,7 +225,7 @@ export default function ItemForm({
 
   const onIosDate = (event, selected) => {
     if (selected) {
-      setExpiryDate(selected);
+      setExpiryDate(middayOf(selected));
     }
   };
 

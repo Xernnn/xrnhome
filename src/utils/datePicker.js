@@ -1,6 +1,14 @@
 import { Platform } from "react-native";
 import { DateTimePickerAndroid } from "@react-native-community/datetimepicker";
 
+// A picked day, kept as midday of it. Kept at whatever time the picker came with
+// (Android's dialog gives the picked day at the time it opened with, mostly now),
+// a date picked at half past midnight in UTC+7 is still the day before in UTC,
+// and reads as that on a device a few time zones further west. Midday stays the
+// same day for any device within 12 hours of this one.
+export const middayOf = (date) =>
+  new Date(date.getFullYear(), date.getMonth(), date.getDate(), 12);
+
 // The browser's date popup. It opens from a hidden input, which has to happen
 // during the click, so nothing may be awaited before calling this.
 const pickInBrowser = (value) =>
@@ -17,7 +25,7 @@ const pickInBrowser = (value) =>
     };
     input.addEventListener("change", () => {
       const [year, month, day] = input.value.split("-").map(Number);
-      finish(input.value ? new Date(year, month - 1, day, 12) : null);
+      finish(input.value ? middayOf(new Date(year, month - 1, day)) : null);
     });
     input.addEventListener("cancel", () => finish(null));
     document.body.appendChild(input);
@@ -44,7 +52,7 @@ export const pickDate = (value) => {
       value,
       mode: "date",
       onChange: (event, date) =>
-        resolve(event.type === "set" && date ? date : null),
+        resolve(event.type === "set" && date ? middayOf(date) : null),
       onError: () => resolve(null),
     });
   });
