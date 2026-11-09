@@ -44,11 +44,20 @@ export const isPersistedImage = (uri) =>
   !!IMAGE_DIR &&
   (uri.startsWith(IMAGE_DIR) || uri.startsWith(LEGACY_IMAGE_DIR));
 
+// The picked image's size. Asked for with callbacks, which every platform takes:
+// in the browser Image.getSize returns nothing to wait for, and calls its
+// success callback whether or not there is one, from a timer that only stops
+// once that call has gone through.
+const imageSize = (uri) =>
+  new Promise((resolve, reject) => {
+    Image.getSize(uri, (width, height) => resolve({ width, height }), reject);
+  });
+
 // A smaller JPEG of the picked image, or null when it's small enough already or
 // can't be read that way (the original is copied as it is then).
 const shrunken = async (uri) => {
   try {
-    const { width, height } = await Image.getSize(uri);
+    const { width, height } = await imageSize(uri);
     const side = Math.max(width, height);
     if (!side || side <= MAX_PHOTO_SIDE) {
       return null;
