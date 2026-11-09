@@ -4,6 +4,7 @@ import {
   mergeCategories,
   mergeCopies,
   normalizeItem,
+  prepareItems,
   reducer,
   sameItems,
   tooManyGone,
@@ -23,6 +24,8 @@ const item = (id, fields = {}) =>
 
 const at = (minute) => `2026-02-01T00:${String(minute).padStart(2, "0")}:00.000Z`;
 const find = (list, id) => list.find((i) => i.id === id);
+// A list as the other device gets it: sent, stored and read back.
+const viaServer = (list) => prepareItems(JSON.parse(JSON.stringify(list)), false);
 
 describe("merging two devices' lists", () => {
   it("takes the other side's change to an item only it touched", () => {
@@ -126,6 +129,73 @@ describe("merging two devices' lists", () => {
     const merged = mergeCopies([], mine, theirs);
     expect(merged).toHaveLength(1);
     expect(merged[0].quantity).toBe(3);
+  });
+
+  describe("an item both devices added, folded into one record", () => {
+    // The phone's six eggs are the older record, but the laptop's twelve reached
+    // the server first.
+    const phoneEggs = item("p", { name: "Eggs", quantity: 6, createdAt: at(0) });
+    const laptopEggs = item("l", { name: "eggs", quantity: 12, createdAt: at(1) });
+    const laptopUsedOne = [{ ...laptopEggs, quantity: 11, updatedAt: at(5) }];
+
+    it("counts the stock once when the other device did the folding", () => {
+      const atServer = viaServer(mergeCopies([], [phoneEggs], [laptopEggs]));
+      expect(atServer.map((i) => i.quantity)).toEqual([18]);
+      const merged = mergeCopies([laptopEggs], laptopUsedOne, atServer);
+      expect(merged).toHaveLength(1);
+      expect(merged[0]).toMatchObject({ id: "p", quantity: 17 });
+    });
+
+    it("counts it once when this device folded them and the other's change came in", () => {
+      const phone = mergeCopies([], [phoneEggs], [laptopEggs]);
+      const merged = mergeCopies([laptopEggs], phone, viaServer(laptopUsedOne));
+      expect(merged).toHaveLength(1);
+      expect(merged[0]).toMatchObject({ id: "p", quantity: 17 });
+    });
+
+    it("settles: the other device then ends up with the same", () => {
+      const atServer = viaServer(mergeCopies([], [phoneEggs], [laptopEggs]));
+      const laptop = viaServer(mergeCopies([laptopEggs], laptopUsedOne, atServer));
+      expect(sameItems(mergeCopies(atServer, atServer, laptop), laptop)).toBe(true);
+    });
+
+    it("leaves a record that never took another in as it was", () => {
+      expect(item("1")).not.toHaveProperty("mergedFrom");
+      expect(item("1", { mergedFrom: ["1", 7, "", "x", "x"] }).mergedFrom).toEqual(["x"]);
+    });
+
+    it("doesn't count a record folded into another as gone", () => {
+      const things = (prefix, minute) =>
+        [1, 2, 3, 4].map((n) => item(`${prefix}${n}`, { name: `Thing ${n}`, createdAt: at(minute) }));
+      const laptop = things("l", 1);
+      const atServer = viaServer(mergeCopies([], things("p", 0), laptop));
+      const merged = mergeCopies(laptop, laptop, atServer);
+      expect(merged).toHaveLength(4);
+      expect(tooManyGone(laptop, merged)).toBe(false);
+    });
+  });
+
+  it.each([
+    ["the older one", 0, 1],
+    ["the newer one", 1, 0],
+  ])("counts stock once after the Edit form merged two records into %s on the other device", (_, targetAge, sourceAge) => {
+    const eggs = item("t", { name: "Eggs", quantity: 6, createdAt: at(targetAge) });
+    const hen = item("s", { name: "Hen eggs", quantity: 12, createdAt: at(sourceAge) });
+    const base = [eggs, hen];
+    // The phone renames Hen eggs to Eggs and says yes to merging the two...
+    const phone = reducer(
+      { ...initialState, items: base, loading: false },
+      {
+        type: ACTIONS.MERGE_ITEMS,
+        payload: { sourceId: "s", targetId: "t", changes: { name: "Eggs" }, now: at(3) },
+      }
+    ).items;
+    expect(phone.map((i) => i.quantity)).toEqual([18]);
+    // ...while the laptop used one of the hen eggs.
+    const laptop = [eggs, { ...hen, quantity: 11, updatedAt: at(5) }];
+    const merged = mergeCopies(base, laptop, viaServer(phone));
+    expect(merged).toHaveLength(1);
+    expect(merged[0]).toMatchObject({ id: "t", name: "Eggs", quantity: 17 });
   });
 
   it("drops nothing when there's no base to compare with", () => {

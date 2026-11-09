@@ -211,6 +211,32 @@ export const cleanRestockRule = (raw) => {
 const ruleOf = (a, b) =>
   cleanRestockRule(Number.isFinite(a.restockUnits) ? a : b);
 
+// `mergedFrom`: the ids of the records folded into this one (see mergeTwo), so a
+// device that still has one of them under its old id can tell it's this item,
+// whose count already includes it. An old id only matters until every device has
+// caught up, so only the latest few are kept.
+const MAX_MERGED_IDS = 20;
+
+const cleanMergedIds = (ids, ownId) =>
+  [
+    ...new Set(
+      (Array.isArray(ids) ? ids : []).filter(
+        (id) => typeof id === "string" && id && id !== ownId
+      )
+    ),
+  ]
+    .sort()
+    .slice(-MAX_MERGED_IDS);
+
+// The `mergedFrom` of the record `id` names once it holds all of `records`.
+const mergedFromOf = (id, records) => {
+  const ids = cleanMergedIds(
+    records.flatMap((record) => [record.id, ...(record.mergedFrom || [])]),
+    id
+  );
+  return ids.length > 0 ? { mergedFrom: ids } : {};
+};
+
 /**
  * Normalizes any stored item (including legacy shapes) into the current model.
  * When migrateToV2 is set, quantity is rewritten from "sealed only" to a total
@@ -239,11 +265,13 @@ export const normalizeItem = (raw, migrateToV2) => {
   }
 
   const now = new Date().toISOString();
+  const id = typeof raw.id === "string" && raw.id ? raw.id : generateId();
   const [room, category] = placeItem(raw.room, raw.category);
   const expiryDate = parseExpiry(raw.expiryDate);
+  const mergedFrom = cleanMergedIds(raw.mergedFrom, id);
 
   return settle({
-    id: typeof raw.id === "string" && raw.id ? raw.id : generateId(),
+    id,
     name: typeof raw.name === "string" ? raw.name : "Untitled item",
     room,
     category,
@@ -263,6 +291,7 @@ export const normalizeItem = (raw, migrateToV2) => {
     createdAt: typeof raw.createdAt === "string" && raw.createdAt ? raw.createdAt : now,
     updatedAt: typeof raw.updatedAt === "string" && raw.updatedAt ? raw.updatedAt : now,
     history: cleanHistory(raw.history),
+    ...(mergedFrom.length > 0 ? { mergedFrom } : {}),
   });
 };
 
@@ -294,7 +323,9 @@ const joinNotes = (a, b) => {
 };
 
 // One record out of two that describe the same item. Nothing either of them
-// knows is dropped except a second photo: there's room for one.
+// knows is dropped except a second photo: there's room for one. The id that goes
+// is remembered in `mergedFrom`: a device that hasn't seen this yet still has
+// that record, and without it would count its stock a second time.
 const mergeTwo = (a, b) => {
   const [keep, drop] =
     String(a.createdAt) <= String(b.createdAt) ? [a, b] : [b, a];
@@ -315,6 +346,7 @@ const mergeTwo = (a, b) => {
     history: capHistory(
       [...(keep.history || []), ...(drop.history || [])].sort(byDate)
     ),
+    ...mergedFromOf(keep.id, [keep, drop]),
   });
 };
 
@@ -407,7 +439,15 @@ const mergeEdits = (base, mine, theirs) => {
     String(mine.updatedAt) >= String(theirs.updatedAt)
       ? [mine, theirs]
       : [theirs, mine];
-  const merged = { ...newer, history: allHistory(mine, theirs) };
+  // The two only differ in when they began, or what they took in, when one side
+  // folded another record into this one (see mergeCopies).
+  const merged = {
+    ...newer,
+    createdAt:
+      String(mine.createdAt) <= String(theirs.createdAt) ? mine.createdAt : theirs.createdAt,
+    history: allHistory(mine, theirs),
+    ...mergedFromOf(newer.id, [mine, theirs]),
+  };
   if (base) {
     FIELD_GROUPS.forEach((group) => {
       if (groupChanged(group, older, base) && !groupChanged(group, newer, base)) {
@@ -421,13 +461,79 @@ const mergeEdits = (base, mine, theirs) => {
   return settle(merged);
 };
 
+// Where each id that was folded into another record went (see mergeTwo), from
+// all three copies: the device that folded two records needn't be this one.
+const foldedInto = (lists) => {
+  const into = new Map();
+  lists.forEach((list) =>
+    (list || []).forEach((item) =>
+      (item.mergedFrom || []).forEach((id) => {
+        if (id !== item.id && !into.has(id)) {
+          into.set(id, item.id);
+        }
+      })
+    )
+  );
+  return into;
+};
+
+// The id a record goes by now: the one it was folded into, or the one that one
+// was folded into, and so on. Two devices that each folded a pair the other way
+// make a loop, which every copy settles the same way.
+const currentId = (into, id) => {
+  const path = [id];
+  let at = id;
+  while (into.has(at)) {
+    at = into.get(at);
+    const loop = path.indexOf(at);
+    if (loop !== -1) {
+      return path.slice(loop).sort()[0];
+    }
+    path.push(at);
+  }
+  return at;
+};
+
+const byAge = (a, b) =>
+  String(a.createdAt).localeCompare(String(b.createdAt)) ||
+  String(a.id).localeCompare(String(b.id));
+
+// `list` with each record under the id it goes by now, and records that turn
+// out to be one item folded together as the device that folded them did.
+const underCurrentIds = (list, into) => {
+  if (!list || into.size === 0) {
+    return list;
+  }
+  const groups = new Map();
+  list.forEach((item) => {
+    const id = currentId(into, item.id);
+    groups.set(id, [...(groups.get(id) || []), item]);
+  });
+  return Array.from(groups, ([id, records]) => {
+    if (records.length === 1 && records[0].id === id) {
+      return records[0];
+    }
+    const folded = [...records].sort(byAge).reduce((a, b) => mergeTwo(a, b));
+    return { ...folded, id, ...mergedFromOf(id, records) };
+  });
+};
+
 // This device's items and the server's, as one list. `base` is the server copy
 // this device last built on (null when there isn't one), which is what tells
 // "they deleted it" from "I just added it". A deletion only wins over an item
 // nobody has touched since: an edit outlives it, because putting back something
 // deleted is easy and getting back something lost isn't. Without a base nothing
 // can be read as deleted, so everything on either side stays.
-export const mergeCopies = (base, mine, theirs) => {
+//
+// A record one side folded into another (the same item added on both devices,
+// or two merged in the Edit form) is first folded the same way in the other two
+// copies. Otherwise the side that still has it would see it as an edit outliving
+// a deletion, keep it, and count its stock again on top of the record that took
+// it in.
+export const mergeCopies = (baseCopy, mineCopy, theirsCopy) => {
+  const copies = [baseCopy, mineCopy, theirsCopy];
+  const into = foldedInto(copies);
+  const [base, mine, theirs] = copies.map((list) => underCurrentIds(list, into));
   const before = new Map((base || []).map((item) => [item.id, item]));
   const incoming = new Map(theirs.map((item) => [item.id, item]));
   const here = new Set(mine.map((item) => item.id));
@@ -454,9 +560,10 @@ export const sameItems = (a, b) => {
 };
 
 // A merge taking away most of what's here is more likely a mistake somewhere than
-// a lot of deleting, so it waits for the person. A few deletions never count.
+// a lot of deleting, so it waits for the person. A few deletions never count, nor
+// does a record folded into another one, which holds it now.
 export const tooManyGone = (mine, merged) => {
-  const kept = new Set(merged.map((item) => item.id));
+  const kept = new Set(merged.flatMap((item) => [item.id, ...(item.mergedFrom || [])]));
   const gone = mine.filter((item) => !kept.has(item.id)).length;
   return gone > 3 && gone > mine.length / 2;
 };
@@ -785,6 +892,7 @@ export function reducer(state, action) {
               ? {
                   ...merged,
                   id: targetId,
+                  ...mergedFromOf(targetId, [target, source]),
                   updatedAt: now,
                   history: capHistory([
                     ...merged.history,
