@@ -461,16 +461,27 @@ export const tooManyGone = (mine, merged) => {
   return gone > 3 && gone > mine.length / 2;
 };
 
-// The same three-way idea for the person's own categories.
+// The same three-way idea for the person's own categories. Their order counts
+// too, since it's sent and it picks each one's colour, so it's the server's, with
+// each category only this device added put back after the one it follows here.
+// With each device keeping its own order, two that had added theirs in turn never
+// agreed, and sent their lists back and forth for as long as both were open.
 export const mergeCategories = (base, mine, theirs) => {
   const key = (category) => `${category.room}|${category.label}`;
   const before = new Set((base || []).map(key));
   const here = new Set(mine.map(key));
   const there = new Set(theirs.map(key));
-  return [
-    ...mine.filter((c) => there.has(key(c)) || !before.has(key(c))),
-    ...theirs.filter((c) => !here.has(key(c)) && !before.has(key(c))),
-  ];
+  const merged = theirs.filter((c) => here.has(key(c)) || !before.has(key(c)));
+  let at = 0;
+  mine.forEach((c) => {
+    if (there.has(key(c))) {
+      at = merged.findIndex((m) => key(m) === key(c)) + 1;
+    } else if (!before.has(key(c))) {
+      merged.splice(at, 0, c);
+      at += 1;
+    }
+  });
+  return merged;
 };
 
 /**

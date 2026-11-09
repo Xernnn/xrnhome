@@ -176,6 +176,21 @@ describe("merging the person's categories", () => {
     expect(mergeCategories([], [baby], [pets])).toEqual([baby, pets]);
   });
 
+  it("settles: the device that merges second takes the order it gets", () => {
+    // The laptop's Pets reached the server first, and the phone merged it in...
+    const atServer = mergeCategories([], [baby], [pets]);
+    // ...and the laptop, unchanged since, ends up with that list as it is.
+    expect(mergeCategories([pets], [pets], atServer)).toEqual(atServer);
+  });
+
+  it("puts one added here back after the one it followed, and both sides agree", () => {
+    const toys = { label: "Toys", room: "household" };
+    const laptop = [baby, pets];
+    const atServer = mergeCategories([baby], [baby, toys], laptop);
+    expect(atServer).toEqual([baby, toys, pets]);
+    expect(mergeCategories(laptop, laptop, atServer)).toEqual(atServer);
+  });
+
   it("drops one removed on either side", () => {
     expect(mergeCategories([baby], [], [baby])).toEqual([]);
     expect(mergeCategories([baby], [baby], [])).toEqual([]);

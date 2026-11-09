@@ -204,3 +204,29 @@ describe("a list that had to be recovered", () => {
     expect(app.inventory.items).toHaveLength(6);
   });
 });
+
+describe("the person's own categories", () => {
+  const baby = { label: "Baby", room: "household" };
+  const pets = { label: "Pets", room: "household" };
+
+  it("aren't sent back only to put them in this device's order", async () => {
+    await launch();
+    await act(async () => {
+      app.inventory.addCategory("Baby", "household");
+    });
+    await add("Milk");
+    await wait(16000);
+    expect(server.doc.categories).toEqual([baby]);
+
+    // The laptop made Pets before Baby reached it, so its list starts with Pets.
+    server.doc = { ...server.doc, categories: [pets, baby] };
+    server.version += 1;
+    const puts = server.puts;
+    await wait(5 * 30000);
+    expect(server.puts).toBe(puts);
+    expect(app.inventory.categories.map(({ label, room }) => ({ label, room }))).toEqual([
+      pets,
+      baby,
+    ]);
+  });
+});
