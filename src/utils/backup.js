@@ -6,7 +6,7 @@ import { CURRENT_SCHEMA_VERSION } from "./storage";
 const BACKUP_VERSION = 3;
 
 // Writes all items to a JSON file and opens the system share sheet.
-export const exportData = async (items) => {
+export const exportData = async (items, categories) => {
   const payload = {
     app: "xrnhome",
     version: BACKUP_VERSION,
@@ -14,6 +14,7 @@ export const exportData = async (items) => {
     // before this field existed use schema 1.
     schemaVersion: CURRENT_SCHEMA_VERSION,
     exportedAt: new Date().toISOString(),
+    categories: (categories || []).map(({ label, room }) => ({ label, room })),
     items: Array.isArray(items) ? items : [],
   };
   const json = JSON.stringify(payload, null, 2);
@@ -34,7 +35,8 @@ export const exportData = async (items) => {
   return fileUri;
 };
 
-// Lets the user pick a JSON backup file and returns { items, schemaVersion }.
+// Lets the user pick a JSON backup file and returns { items, schemaVersion,
+// categories }.
 // Returns null if the user cancels. Throws on an invalid file. Older backups
 // (including PantryPal ones) carry no schemaVersion and are read as schema 1.
 export const importData = async () => {
@@ -62,5 +64,9 @@ export const importData = async () => {
     !Array.isArray(parsed) && Number.isFinite(parsed.schemaVersion)
       ? parsed.schemaVersion
       : 1;
-  return { items, schemaVersion };
+  const categories =
+    !Array.isArray(parsed) && Array.isArray(parsed.categories)
+      ? parsed.categories
+      : null;
+  return { items, schemaVersion, categories };
 };

@@ -2,34 +2,56 @@ import React, { useMemo, useState } from "react";
 import {
   View,
   Text,
-  Image,
   ScrollView,
   TextInput,
-  TouchableOpacity,
-  Switch,
   StyleSheet,
   Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 
-import { useInventory, computeStep } from "../context/InventoryContext";
+import { useInventory } from "../context/InventoryContext";
 import { useTheme } from "../context/ThemeContext";
-import CategoryBadge from "../components/CategoryBadge";
 import EmptyState from "../components/EmptyState";
-import { haptics } from "../utils/haptics";
+import PackPhoto from "../components/PackPhoto";
+import { Stepper } from "../components/QuantityControl";
 import {
-  SPACING,
+  FormSection,
+  GroupCard,
+  GroupRow,
+  Hairline,
+  OutlinePill,
+  PillButton,
+  RoundIconButton,
+  SectionLabel,
+  SwitchRow,
+  TagButton,
+  TopBar,
+} from "../components/ui";
+import { haptics } from "../utils/haptics";
+import { pickDate } from "../utils/datePicker";
+import { usePackShade } from "../utils/packColourCache";
+import {
+  FONTS,
+  OPENED_STEP,
+  PACK_INK,
+  PACK_OUT,
   RADIUS,
-  SHADOW,
+  SPACING,
+  TYPE,
+  describeRestockRule,
   formatExpiryDate,
-  getCategoryMeta,
   getExpiryColor,
   getExpiryLabel,
   getExpiryStatus,
+  getRestockRule,
   getRoomMeta,
   hexToRgba,
+  isOnBuyList,
   isTrackingOpened,
+  mixHex,
+  needsExpiryDate,
+  unitFor,
 } from "../utils/constants";
 
 const formatDate = (iso) => {
@@ -47,33 +69,42 @@ const formatDate = (iso) => {
   }
 };
 
+// The top of the page: the item's card, at full size.
+function PackHero({ item, where }) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+  const shade = usePackShade(item);
+  return (
+    <View style={[styles.hero, { backgroundColor: item.quantity > 0 ? shade : PACK_OUT }]}>
+      <PackPhoto item={item} style={styles.heroPhoto} />
+      <Text style={styles.name}>{item.name}</Text>
+      <Text style={styles.where}>{where}</Text>
+    </View>
+  );
+}
+
 export default function ItemDetailScreen({ navigation, route }) {
   const { itemId } = route.params || {};
-  const { getItemById, updateItem, deleteItem } = useInventory();
+  const { getItemById, updateItem, stepItem, buyItem, toggleOnList } = useInventory();
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const item = getItemById(itemId);
 
   const [restockOpen, setRestockOpen] = useState(false);
-  const [restockValue, setRestockValue] = useState("");
+  const [restockValue, setRestockValue] = useState("1");
+
+  const back = (
+    <RoundIconButton
+      icon="arrow-left"
+      label="Back"
+      onPress={() => navigation.goBack()}
+    />
+  );
 
   if (!item) {
     return (
       <SafeAreaView style={styles.safe} edges={["top"]}>
-        <View style={styles.header}>
-          <TouchableOpacity
-            activeOpacity={0.7}
-            onPress={() => navigation.goBack()}
-            style={styles.headerButton}
-          >
-            <MaterialCommunityIcons
-              name="arrow-left"
-              size={24}
-              color={colors.textPrimary}
-            />
-          </TouchableOpacity>
-          <View style={styles.headerButton} />
-        </View>
+        <TopBar left={back} />
         <EmptyState
           icon="alert-circle-outline"
           title="Item not found"
@@ -83,7 +114,6 @@ export default function ItemDetailScreen({ navigation, route }) {
     );
   }
 
-  const meta = getCategoryMeta(item.category);
   const room = getRoomMeta(item.room);
   const tracking = isTrackingOpened(item);
   // An empty % item has no open unit to show, but it is still a % item.
@@ -91,40 +121,39 @@ export default function ItemDetailScreen({ navigation, route }) {
   const expiryStatus = getExpiryStatus(item);
   const expiryColor = getExpiryColor(expiryStatus, colors);
 
+  const onList = isOnBuyList(item);
+
   const handleStep = (dir) => {
-    const result = computeStep(item, dir);
-    if (result.changes) {
-      haptics.light();
-      updateItem(item.id, result.changes, result.historyEntry);
-      if (result.willEmpty) {
-        navigation.goBack();
-      }
-    }
+    haptics.light();
+    stepItem(item.id, dir);
   };
 
   const handleRestock = () => {
     const amount = parseInt(restockValue, 10);
     if (!Number.isFinite(amount) || amount <= 0) {
-      Alert.alert(
-        "Invalid amount",
-        "Please enter a valid number of units to add."
-      );
+      Alert.alert("How many?", "Enter how many you bought.");
       return;
     }
-    const before = item.quantity;
-    const after = before + amount;
     haptics.success();
-    updateItem(
-      item.id,
-      { quantity: after },
-      {
-        action: `Restocked ${amount} ${item.unit}`,
-        quantityBefore: before,
-        quantityAfter: after,
-      }
-    );
-    setRestockValue("");
+    buyItem(item.id, amount);
+    setRestockValue("1");
     setRestockOpen(false);
+  };
+
+  const handleList = () => {
+    haptics.light();
+    toggleOnList(item.id);
+  };
+
+  const setExpiry = async () => {
+    const picked = await pickDate(new Date());
+    if (picked) {
+      updateItem(
+        item.id,
+        { expiryDate: picked.toISOString() },
+        { action: "Set the expiry date" }
+      );
+    }
   };
 
   const toggleRecurring = (value) => {
@@ -136,66 +165,21 @@ export default function ItemDetailScreen({ navigation, route }) {
     );
   };
 
-  const handleDelete = () => {
-    Alert.alert(
-      "Delete item",
-      `Delete "${item.name}"? You'll get a few seconds to undo.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Delete",
-          style: "destructive",
-          onPress: () => {
-            haptics.warning();
-            deleteItem(item.id);
-            navigation.goBack();
-          },
-        },
-      ]
-    );
-  };
-
   const recentHistory = (item.history || []).slice(-10).reverse();
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
-      <View style={styles.header}>
-        <TouchableOpacity
-          activeOpacity={0.7}
-          onPress={() => navigation.goBack()}
-          style={styles.headerButton}
-        >
-          <MaterialCommunityIcons
-            name="arrow-left"
-            size={24}
-            color={colors.textPrimary}
-          />
-        </TouchableOpacity>
-        <View style={styles.headerActions}>
-          <TouchableOpacity
-            activeOpacity={0.7}
+      <TopBar
+        left={back}
+        right={
+          <RoundIconButton
+            icon="pencil-outline"
+            label="Edit"
+            outlined
             onPress={() => navigation.navigate("EditItem", { itemId: item.id })}
-            style={styles.headerButton}
-          >
-            <MaterialCommunityIcons
-              name="pencil"
-              size={22}
-              color={colors.accent}
-            />
-          </TouchableOpacity>
-          <TouchableOpacity
-            activeOpacity={0.7}
-            onPress={handleDelete}
-            style={styles.headerButton}
-          >
-            <MaterialCommunityIcons
-              name="trash-can-outline"
-              size={22}
-              color={colors.danger}
-            />
-          </TouchableOpacity>
-        </View>
-      </View>
+          />
+        }
+      />
 
       <ScrollView
         style={styles.flex}
@@ -203,231 +187,156 @@ export default function ItemDetailScreen({ navigation, route }) {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.heroWrap}>
-          {item.imageUri ? (
-            <Image source={{ uri: item.imageUri }} style={styles.hero} />
-          ) : (
-            <View
-              style={[
-                styles.heroPlaceholder,
-                { backgroundColor: hexToRgba(meta.color, 0.18) },
-              ]}
-            >
-              <MaterialCommunityIcons
-                name={meta.icon}
-                size={72}
-                color={meta.color}
-              />
-            </View>
-          )}
-        </View>
+        <PackHero item={item} where={`${item.category} · ${room.label}`} />
 
-        <View style={styles.content}>
-          <Text style={styles.name}>{item.name}</Text>
-
-          <View style={styles.badgeRow}>
-            <CategoryBadge category={item.category} />
-            <View style={styles.roomBadge}>
-              <MaterialCommunityIcons
-                name={room.icon}
-                size={15}
-                color={colors.textSecondary}
-              />
-              <Text style={styles.roomBadgeText}>{room.label}</Text>
-            </View>
-          </View>
-
-          {item.expiryDate ? (
-            <View
-              style={[
-                styles.expiryBanner,
-                { backgroundColor: hexToRgba(expiryColor, 0.14) },
-              ]}
-            >
-              <MaterialCommunityIcons
-                name={
-                  expiryStatus === "expired"
-                    ? "alert-circle"
-                    : expiryStatus === "soon"
-                    ? "clock-alert-outline"
-                    : "calendar-check-outline"
-                }
-                size={20}
-                color={expiryColor}
-              />
-              <View style={styles.expiryTextWrap}>
-                <Text style={[styles.expiryStatusText, { color: expiryColor }]}>
-                  {getExpiryLabel(item)}
-                </Text>
-                <Text style={styles.expiryDateText}>
-                  {formatExpiryDate(item.expiryDate)}
-                </Text>
-              </View>
-            </View>
-          ) : null}
-
+        {item.expiryDate ? (
           <View
             style={[
-              styles.infoCardsRow,
-              !showOpenUnit && styles.infoCardsRowSingle,
+              styles.expiryBanner,
+              {
+                backgroundColor: mixHex(expiryColor, colors.background, 0.12),
+                borderColor: mixHex(expiryColor, colors.background, 0.4),
+              },
             ]}
           >
-            <View
-              style={[styles.infoCard, showOpenUnit && styles.infoCardWithGap]}
-            >
-              <Text style={styles.infoCardLabel}>Units</Text>
-              <Text style={styles.infoCardValue}>
-                {item.quantity} {item.unit}
+            <MaterialCommunityIcons
+              name={
+                expiryStatus === "expired"
+                  ? "alert-circle"
+                  : expiryStatus === "soon"
+                  ? "clock-alert-outline"
+                  : "calendar-check-outline"
+              }
+              size={20}
+              color={expiryColor}
+            />
+            <View style={styles.expiryTextWrap}>
+              <Text style={[styles.expiryStatusText, { color: expiryColor }]}>
+                {getExpiryLabel(item)}
+              </Text>
+              <Text style={styles.expiryDateText}>
+                {formatExpiryDate(item.expiryDate)}
               </Text>
             </View>
+          </View>
+        ) : null}
+
+        {needsExpiryDate(item) ? (
+          <View style={styles.dateMissing}>
+            <MaterialCommunityIcons
+              name="calendar-alert"
+              size={20}
+              color={colors.textSecondary}
+            />
+            <Text style={styles.dateMissingText}>
+              This stock has no expiry date yet
+            </Text>
+            <TagButton label="Set date" onPress={setExpiry} />
+          </View>
+        ) : null}
+
+        <FormSection icon="counter" title="How much is left?">
+          <View style={styles.stockRow}>
+            <View style={styles.stockCell}>
+              <Text style={styles.stockValue}>{item.quantity}</Text>
+              <Text style={styles.stockLabel}>{unitFor(item.quantity, item.unit)}</Text>
+            </View>
             {showOpenUnit ? (
-              <View style={styles.infoCard}>
-                <Text style={styles.infoCardLabel}>Open unit</Text>
-                <Text style={styles.infoCardValue}>
-                  {item.openedPercent}%
-                </Text>
+              <View style={styles.stockCell}>
+                <Text style={styles.stockValue}>{item.openedPercent}%</Text>
+                <Text style={styles.stockLabel}>left in the open one</Text>
               </View>
             ) : null}
           </View>
-
-          <View style={styles.recurringRow}>
-            <View style={styles.recurringTextWrap}>
-              <MaterialCommunityIcons
-                name="cart-outline"
-                size={18}
-                color={colors.accent}
-              />
-              <Text style={styles.recurringLabel}>Shopping list</Text>
-            </View>
-            <Switch
-              value={!!item.recurring}
-              onValueChange={toggleRecurring}
-              trackColor={{ false: colors.border, true: colors.accent }}
-              thumbColor={colors.white}
+          <Hairline inset={0} />
+          <View style={styles.stepLine}>
+            <Text style={[styles.lineTitle, styles.flex]}>
+              {tracking ? `Use or top up ${OPENED_STEP}%` : "Use or add one"}
+            </Text>
+            <Stepper
+              onMinus={() => handleStep(-1)}
+              onPlus={() => handleStep(1)}
+              minusDisabled={item.quantity <= 0}
+              minusLabel={tracking ? `Use ${OPENED_STEP} percent` : "Use one"}
+              plusLabel={tracking ? `Add ${OPENED_STEP} percent` : "Add one"}
             />
           </View>
-
-          {item.note && item.note.trim().length > 0 ? (
-            <View style={styles.noteCard}>
-              <Text style={styles.sectionTitle}>Note</Text>
-              <Text style={styles.noteText}>{item.note}</Text>
-            </View>
-          ) : null}
-
-          <Text style={styles.sectionTitle}>Quick Update</Text>
-
-          {showOpenUnit ? (
-            <View style={styles.openedControlCard}>
-              <Text style={styles.openedControlLabel}>Open unit</Text>
-              <View style={styles.openedControlRow}>
-                <TouchableOpacity
-                  activeOpacity={0.7}
-                  style={styles.openedStepButton}
-                  onPress={() => handleStep(-1)}
-                >
-                  <MaterialCommunityIcons
-                    name="minus"
-                    size={22}
-                    color={colors.accent}
-                  />
-                </TouchableOpacity>
-                <Text style={styles.openedPercentValue}>
-                  {item.openedPercent}%
-                </Text>
-                <TouchableOpacity
-                  activeOpacity={0.7}
-                  style={styles.openedStepButton}
-                  onPress={() => handleStep(1)}
-                >
-                  <MaterialCommunityIcons
-                    name="plus"
-                    size={22}
-                    color={colors.accent}
-                  />
-                </TouchableOpacity>
-              </View>
-            </View>
-          ) : null}
-
-          <View style={styles.quickRow}>
-            {tracking ? null : (
-              <TouchableOpacity
-                activeOpacity={0.7}
-                style={[styles.quickButton, styles.useButton]}
-                onPress={() => handleStep(-1)}
-              >
-                <MaterialCommunityIcons
-                  name="minus-circle-outline"
-                  size={20}
-                  color={colors.white}
-                />
-                <Text style={styles.quickButtonText}>Use 1</Text>
-              </TouchableOpacity>
-            )}
-            <TouchableOpacity
-              activeOpacity={0.7}
-              style={[styles.quickButton, styles.restockButton]}
-              onPress={() => setRestockOpen((prev) => !prev)}
-            >
-              <MaterialCommunityIcons
-                name="plus-circle-outline"
-                size={20}
-                color={colors.accent}
-              />
-              <Text style={[styles.quickButtonText, styles.restockButtonText]}>
-                Restock
-              </Text>
-            </TouchableOpacity>
-          </View>
-
           {restockOpen ? (
             <View style={styles.inlineInputRow}>
               <TextInput
                 style={styles.inlineInput}
                 value={restockValue}
                 onChangeText={setRestockValue}
-                keyboardType="numeric"
+                keyboardType="number-pad"
+                placeholder={`How many ${item.unit}`}
+                placeholderTextColor={colors.textSecondary}
+                accessibilityLabel={`How many ${item.unit}`}
+                selectTextOnFocus
                 autoFocus
               />
-              <TouchableOpacity
-                activeOpacity={0.7}
-                style={styles.confirmButton}
+              <PillButton
+                label="Add"
                 onPress={handleRestock}
-              >
-                <Text style={styles.confirmButtonText}>Add</Text>
-              </TouchableOpacity>
+                style={styles.confirmButton}
+              />
             </View>
-          ) : null}
-
-          <Text style={styles.sectionTitle}>History</Text>
-          {recentHistory.length === 0 ? (
-            <Text style={styles.emptyHistory}>No history yet.</Text>
           ) : (
-            <View style={styles.timeline}>
-              {recentHistory.map((entry, index) => (
-                <View
-                  key={`${entry.date}-${index}`}
-                  style={styles.timelineItem}
-                >
-                  <View style={styles.timelineDotColumn}>
-                    <View style={styles.timelineDot} />
-                    {index < recentHistory.length - 1 ? (
-                      <View style={styles.timelineLine} />
-                    ) : null}
-                  </View>
-                  <View style={styles.timelineContent}>
-                    <Text style={styles.timelineAction}>{entry.action}</Text>
-                    <Text style={styles.timelineDate}>
-                      {formatDate(entry.date)}
-                    </Text>
-                  </View>
-                </View>
-              ))}
-            </View>
+            <OutlinePill
+              label="Bought more"
+              icon="plus-circle-outline"
+              onPress={() => setRestockOpen(true)}
+              style={styles.restockButton}
+            />
           )}
+        </FormSection>
 
-          <View style={styles.bottomSpacer} />
-        </View>
+        <SectionLabel>Shopping list</SectionLabel>
+        <GroupCard>
+          <GroupRow
+            first
+            icon={onList ? "cart" : "cart-plus"}
+            iconColor={onList ? colors.accent : undefined}
+            title={onList ? "On your shopping list" : "Add to the shopping list"}
+            subtitle={onList ? "Tap to take it off for now" : "Just this once"}
+            chevron={false}
+            onPress={handleList}
+          />
+          <SwitchRow
+            icon="autorenew"
+            title="When it's running low"
+            subtitle={
+              item.recurring
+                ? `Goes on the list ${describeRestockRule(getRestockRule(item))}`
+                : "Off. When it runs out it waits under Ran out."
+            }
+            value={!!item.recurring}
+            onValueChange={toggleRecurring}
+          />
+        </GroupCard>
+
+        {item.note && item.note.trim().length > 0 ? (
+          <FormSection icon="note-text-outline" title="Note">
+            <Text style={styles.noteText}>{item.note}</Text>
+          </FormSection>
+        ) : null}
+
+        <SectionLabel>History</SectionLabel>
+        {recentHistory.length === 0 ? (
+          <Text style={styles.emptyHistory}>No history yet.</Text>
+        ) : (
+          <GroupCard>
+            {recentHistory.map((entry, index) => (
+              <GroupRow
+                key={`${entry.date}-${index}`}
+                first={index === 0}
+                title={entry.action}
+                subtitle={formatDate(entry.date)}
+              />
+            ))}
+          </GroupCard>
+        )}
+
+        <View style={styles.bottomSpacer} />
       </ScrollView>
     </SafeAreaView>
   );
@@ -442,291 +351,128 @@ const createStyles = (colors) =>
     flex: {
       flex: 1,
     },
-    header: {
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "space-between",
-      paddingHorizontal: SPACING.inner,
-      paddingVertical: 8,
-    },
-    headerActions: {
-      flexDirection: "row",
-    },
-    headerButton: {
-      width: 40,
-      height: 40,
-      alignItems: "center",
-      justifyContent: "center",
-    },
     scrollContent: {
-      paddingBottom: 8,
-    },
-    heroWrap: {
-      width: "100%",
-      aspectRatio: 1,
-      backgroundColor: colors.surfaceAlt,
+      paddingHorizontal: SPACING.screen,
+      paddingTop: 4,
     },
     hero: {
-      width: "100%",
-      height: "100%",
-      resizeMode: "cover",
+      padding: 10,
+      paddingBottom: 16,
+      borderRadius: RADIUS.card + 4,
     },
-    heroPlaceholder: {
-      width: "100%",
-      height: "100%",
-      alignItems: "center",
-      justifyContent: "center",
-    },
-    content: {
-      padding: SPACING.screen,
+    heroPhoto: {
+      maxWidth: 340,
+      alignSelf: "center",
     },
     name: {
-      fontSize: 26,
-      fontWeight: "800",
-      color: colors.textPrimary,
-      marginBottom: SPACING.card,
+      ...TYPE.pageTitle,
+      marginTop: 12,
+      paddingHorizontal: 8,
+      color: PACK_INK,
     },
-    badgeRow: {
-      flexDirection: "row",
-      alignItems: "center",
-      flexWrap: "wrap",
-      marginBottom: SPACING.screen,
-    },
-    roomBadge: {
-      flexDirection: "row",
-      alignItems: "center",
-      marginLeft: SPACING.inner,
-      paddingVertical: 5,
-      paddingHorizontal: 10,
-      borderRadius: RADIUS.pill,
-      backgroundColor: colors.surfaceAlt,
-    },
-    roomBadgeText: {
-      marginLeft: 4,
-      fontSize: 13,
-      fontWeight: "600",
-      color: colors.textSecondary,
+    where: {
+      ...TYPE.caption,
+      marginTop: 2,
+      paddingHorizontal: 8,
+      color: hexToRgba(PACK_INK, 0.85),
     },
     expiryBanner: {
       flexDirection: "row",
       alignItems: "center",
       borderRadius: RADIUS.card,
-      padding: SPACING.card,
-      marginBottom: SPACING.card,
+      borderWidth: 1,
+      paddingHorizontal: SPACING.card,
+      paddingVertical: 14,
+      marginTop: 14,
     },
     expiryTextWrap: {
-      marginLeft: SPACING.card,
+      marginLeft: 12,
+      flex: 1,
     },
     expiryStatusText: {
-      fontSize: 15,
-      fontWeight: "700",
+      ...TYPE.button,
     },
     expiryDateText: {
-      fontSize: 13,
+      ...TYPE.caption,
       color: colors.textSecondary,
       marginTop: 2,
     },
-    infoCardsRow: {
+    stockRow: {
       flexDirection: "row",
-      marginBottom: SPACING.card,
+      paddingBottom: 14,
     },
-    infoCardsRowSingle: {
-      flexDirection: "column",
-    },
-    infoCard: {
+    stockCell: {
       flex: 1,
-      backgroundColor: colors.surface,
-      borderRadius: RADIUS.card,
-      padding: SPACING.card,
-      ...SHADOW,
     },
-    infoCardWithGap: {
-      marginRight: SPACING.card,
+    stockValue: {
+      fontFamily: FONTS.mono,
+      fontSize: 30,
+      color: colors.textPrimary,
     },
-    infoCardLabel: {
-      fontSize: 13,
+    stockLabel: {
+      ...TYPE.caption,
       color: colors.textSecondary,
-      marginBottom: 6,
+      marginTop: 2,
     },
-    infoCardValue: {
-      fontSize: 18,
-      fontWeight: "700",
-      color: colors.textPrimary,
-    },
-    recurringRow: {
+    stepLine: {
       flexDirection: "row",
       alignItems: "center",
-      justifyContent: "space-between",
+      minHeight: 60,
+    },
+    dateMissing: {
+      flexDirection: "row",
+      alignItems: "center",
       backgroundColor: colors.surface,
       borderRadius: RADIUS.card,
-      paddingVertical: 10,
+      borderWidth: 1,
+      borderColor: colors.border,
       paddingHorizontal: SPACING.card,
-      marginBottom: SPACING.screen,
-      ...SHADOW,
+      paddingVertical: 12,
+      marginTop: 14,
     },
-    recurringTextWrap: {
-      flexDirection: "row",
-      alignItems: "center",
-    },
-    recurringLabel: {
-      fontSize: 15,
-      fontWeight: "600",
-      color: colors.textPrimary,
-      marginLeft: SPACING.inner,
-    },
-    noteCard: {
-      backgroundColor: colors.surface,
-      borderRadius: RADIUS.card,
-      padding: SPACING.card,
-      marginBottom: SPACING.screen,
-      ...SHADOW,
-    },
-    sectionTitle: {
-      fontSize: 18,
-      fontWeight: "700",
-      color: colors.textPrimary,
-      marginBottom: SPACING.card,
-    },
-    noteText: {
-      fontSize: 15,
-      color: colors.textPrimary,
-      lineHeight: 22,
-    },
-    quickRow: {
-      flexDirection: "row",
-      marginBottom: SPACING.card,
-    },
-    quickButton: {
+    dateMissingText: {
+      ...TYPE.bodySmall,
       flex: 1,
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "center",
-      paddingVertical: 13,
-      borderRadius: RADIUS.button,
+      color: colors.textPrimary,
+      marginLeft: 12,
     },
-    useButton: {
-      backgroundColor: colors.accent,
-      marginRight: SPACING.card,
+    lineTitle: {
+      ...TYPE.body,
+      color: colors.textPrimary,
     },
     restockButton: {
-      backgroundColor: colors.accentLight,
-    },
-    quickButtonText: {
-      fontSize: 15,
-      fontWeight: "700",
-      color: colors.white,
-      marginLeft: 6,
-    },
-    restockButtonText: {
-      color: colors.accent,
+      marginTop: 6,
     },
     inlineInputRow: {
       flexDirection: "row",
       alignItems: "center",
-      marginBottom: SPACING.card,
+      marginTop: 6,
     },
     inlineInput: {
+      ...TYPE.body,
       flex: 1,
-      backgroundColor: colors.surface,
+      height: 50,
+      backgroundColor: colors.surfaceAlt,
       borderRadius: RADIUS.button,
-      borderWidth: 1,
-      borderColor: colors.border,
-      paddingHorizontal: SPACING.card,
-      paddingVertical: 11,
-      fontSize: 16,
+      paddingHorizontal: 14,
       color: colors.textPrimary,
-      marginRight: SPACING.inner,
     },
     confirmButton: {
-      backgroundColor: colors.accent,
-      paddingHorizontal: 18,
-      paddingVertical: 12,
-      borderRadius: RADIUS.button,
+      height: 50,
+      marginLeft: 10,
+      paddingHorizontal: 24,
     },
-    confirmButtonText: {
-      color: colors.white,
-      fontSize: 15,
-      fontWeight: "700",
-    },
-    openedControlCard: {
-      backgroundColor: colors.surface,
-      borderRadius: RADIUS.card,
-      padding: SPACING.card,
-      marginBottom: SPACING.card,
-      ...SHADOW,
-    },
-    openedControlLabel: {
-      fontSize: 14,
-      fontWeight: "700",
+    noteText: {
+      ...TYPE.body,
       color: colors.textPrimary,
-      marginBottom: SPACING.card,
-    },
-    openedControlRow: {
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "center",
-    },
-    openedStepButton: {
-      width: 46,
-      height: 46,
-      borderRadius: 23,
-      backgroundColor: colors.accentLight,
-      alignItems: "center",
-      justifyContent: "center",
-    },
-    openedPercentValue: {
-      fontSize: 26,
-      fontWeight: "800",
-      color: colors.textPrimary,
-      marginHorizontal: SPACING.screen,
-      minWidth: 80,
-      textAlign: "center",
+      lineHeight: 22,
     },
     emptyHistory: {
-      fontSize: 14,
+      ...TYPE.bodySmall,
       color: colors.textSecondary,
-      fontStyle: "italic",
-      marginBottom: SPACING.card,
-    },
-    timeline: {
-      marginTop: 4,
-    },
-    timelineItem: {
-      flexDirection: "row",
-    },
-    timelineDotColumn: {
-      width: 20,
-      alignItems: "center",
-    },
-    timelineDot: {
-      width: 12,
-      height: 12,
-      borderRadius: 6,
-      backgroundColor: colors.accent,
-      marginTop: 4,
-    },
-    timelineLine: {
-      flex: 1,
-      width: 2,
-      backgroundColor: colors.border,
-      marginVertical: 2,
-    },
-    timelineContent: {
-      flex: 1,
-      paddingLeft: SPACING.card,
-      paddingBottom: SPACING.screen,
-    },
-    timelineAction: {
-      fontSize: 15,
-      fontWeight: "600",
-      color: colors.textPrimary,
-    },
-    timelineDate: {
-      fontSize: 12,
-      color: colors.textSecondary,
-      marginTop: 2,
+      marginLeft: 4,
     },
     bottomSpacer: {
-      height: 24,
+      height: 32,
     },
   });

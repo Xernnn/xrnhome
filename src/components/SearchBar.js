@@ -7,7 +7,7 @@ import { useTheme } from "../context/ThemeContext";
 export default function SearchBar({
   value,
   onChangeText,
-  placeholder = "Search items...",
+  placeholder = "Search everything",
   autoFocus = false,
 }) {
   const { colors } = useTheme();
@@ -37,6 +37,8 @@ export default function SearchBar({
           onPress={() => onChangeText("")}
           style={styles.clearButton}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityRole="button"
+          accessibilityLabel="Clear the search"
         >
           <MaterialCommunityIcons
             name="close-circle"
@@ -54,10 +56,12 @@ const createStyles = (colors) =>
     container: {
       flexDirection: "row",
       alignItems: "center",
-      backgroundColor: colors.surfaceAlt,
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
       borderRadius: RADIUS.pill,
-      paddingHorizontal: SPACING.card,
-      height: 44,
+      paddingHorizontal: 16,
+      minHeight: 46,
     },
     leftIcon: {
       marginRight: SPACING.inner,

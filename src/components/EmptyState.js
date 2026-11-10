@@ -1,7 +1,7 @@
 import React, { useMemo } from "react";
 import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { RADIUS, SPACING } from "../utils/constants";
+import { SPACING, TYPE } from "../utils/constants";
 import { useTheme } from "../context/ThemeContext";
 
 export default function EmptyState({
@@ -10,6 +10,7 @@ export default function EmptyState({
   subtitle = "",
   actionLabel = null,
   onAction = null,
+  actionIcon = "plus",
 }) {
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
@@ -17,7 +18,7 @@ export default function EmptyState({
   return (
     <View style={styles.container}>
       <View style={styles.iconCircle}>
-        <MaterialCommunityIcons name={icon} size={56} color={colors.accent} />
+        <MaterialCommunityIcons name={icon} size={48} color={colors.textSecondary} />
       </View>
       <Text style={styles.title}>{title}</Text>
       {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
@@ -26,11 +27,12 @@ export default function EmptyState({
           activeOpacity={0.7}
           style={styles.button}
           onPress={onAction}
+          accessibilityRole="button"
         >
           <MaterialCommunityIcons
-            name="plus"
+            name={actionIcon}
             size={18}
-            color={colors.white}
+            color={colors.onAccent}
             style={styles.buttonIcon}
           />
           <Text style={styles.buttonText}>{actionLabel}</Text>
@@ -50,17 +52,18 @@ const createStyles = (colors) =>
       paddingVertical: 48,
     },
     iconCircle: {
-      width: 110,
-      height: 110,
-      borderRadius: 55,
-      backgroundColor: colors.accentLight,
+      width: 96,
+      height: 96,
+      borderRadius: 48,
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
       alignItems: "center",
       justifyContent: "center",
       marginBottom: SPACING.screen,
     },
     title: {
-      fontSize: 18,
-      fontWeight: "700",
+      ...TYPE.title,
       color: colors.textPrimary,
       textAlign: "center",
       marginBottom: SPACING.inner,
@@ -76,17 +79,16 @@ const createStyles = (colors) =>
       flexDirection: "row",
       alignItems: "center",
       backgroundColor: colors.accent,
-      paddingVertical: 12,
-      paddingHorizontal: 20,
-      borderRadius: RADIUS.button,
+      minHeight: 50,
+      paddingHorizontal: 24,
+      borderRadius: 25,
       marginTop: SPACING.inner,
     },
     buttonIcon: {
       marginRight: 6,
     },
     buttonText: {
-      color: colors.white,
-      fontSize: 16,
-      fontWeight: "600",
+      ...TYPE.button,
+      color: colors.onAccent,
     },
   });

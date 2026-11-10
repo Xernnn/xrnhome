@@ -1,8 +1,21 @@
+import { Image, Platform } from "react-native";
 import * as FileSystem from "expo-file-system/legacy";
+import * as ImageManipulator from "expo-image-manipulator";
+
+import { WEB_ROOT, syncAvailable } from "./homeServer";
+
+// A card shows a photo at a few hundred pixels, and every byte also goes to the
+// home server, so a 12 megapixel original isn't worth keeping.
+const MAX_PHOTO_SIDE = 1280;
+
+const IN_BROWSER = Platform.OS === "web";
 
 // Picked images live in a temporary cache that the OS can purge. We copy them
-// into a persistent app directory and store that stable path instead.
-const IMAGE_DIR = FileSystem.documentDirectory
+// into a persistent app directory and store that stable path instead. A browser
+// has no such folder: its photos live on the home server that served the page.
+const IMAGE_DIR = IN_BROWSER
+  ? `${WEB_ROOT}/photos/`
+  : FileSystem.documentDirectory
   ? `${FileSystem.documentDirectory}xrnhome_images/`
   : null;
 
@@ -13,7 +26,7 @@ const LEGACY_IMAGE_DIR = FileSystem.documentDirectory
   : null;
 
 const ensureDir = async () => {
-  if (!IMAGE_DIR) {
+  if (!IMAGE_DIR || IN_BROWSER) {
     return;
   }
   try {
@@ -31,7 +44,66 @@ export const isPersistedImage = (uri) =>
   !!IMAGE_DIR &&
   (uri.startsWith(IMAGE_DIR) || uri.startsWith(LEGACY_IMAGE_DIR));
 
-// Copies a picked image URI into persistent storage; returns the new stable URI.
+// The picked image's size. Asked for with callbacks, which every platform takes:
+// in the browser Image.getSize returns nothing to wait for, and calls its
+// success callback whether or not there is one, from a timer that only stops
+// once that call has gone through.
+const imageSize = (uri) =>
+  new Promise((resolve, reject) => {
+    Image.getSize(uri, (width, height) => resolve({ width, height }), reject);
+  });
+
+// A smaller JPEG of the picked image, or null when it's small enough already or
+// can't be read that way (the original is copied as it is then).
+const shrunken = async (uri) => {
+  try {
+    const { width, height } = await imageSize(uri);
+    const side = Math.max(width, height);
+    if (!side || side <= MAX_PHOTO_SIDE) {
+      return null;
+    }
+    const resize =
+      width >= height ? { width: MAX_PHOTO_SIDE } : { height: MAX_PHOTO_SIDE };
+    const result = await ImageManipulator.manipulateAsync(uri, [{ resize }], {
+      compress: 0.75,
+      format: ImageManipulator.SaveFormat.JPEG,
+    });
+    return result.uri;
+  } catch (e) {
+    return null;
+  }
+};
+
+const newPhotoName = (ext) =>
+  `${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+
+const WEB_EXTENSIONS = {
+  "image/png": "png",
+  "image/webp": "webp",
+  "image/gif": "gif",
+};
+
+// Sends a picked image to the home server and returns where it now lives. Throws
+// when that fails, so the form stays open with the photo instead of saving an
+// item whose photo exists only in this tab.
+const uploadFromBrowser = async (uri) => {
+  const source = (await shrunken(uri)) || uri;
+  const picked = await fetch(source);
+  const blob = await picked.blob();
+  const name = newPhotoName(WEB_EXTENSIONS[blob.type] || "jpg");
+  const res = await fetch(`${IMAGE_DIR}${name}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/octet-stream" },
+    body: blob,
+  });
+  if (!res.ok) {
+    throw new Error(`The home server didn't take the photo (${res.status}).`);
+  }
+  return `${IMAGE_DIR}${name}`;
+};
+
+// Copies a picked image URI into persistent storage, shrinking it if it's large;
+// returns the new stable URI.
 export const persistImage = async (uri) => {
   if (!uri || !IMAGE_DIR) {
     return uri ?? null;
@@ -39,15 +111,17 @@ export const persistImage = async (uri) => {
   if (isPersistedImage(uri)) {
     return uri;
   }
+  if (IN_BROWSER) {
+    return syncAvailable ? uploadFromBrowser(uri) : uri;
+  }
   try {
     await ensureDir();
-    const rawExt = uri.split(".").pop() || "jpg";
+    const source = (await shrunken(uri)) || uri;
+    const rawExt = source.split(".").pop() || "jpg";
     const ext =
       rawExt.split("?")[0].slice(0, 4).replace(/[^a-zA-Z0-9]/g, "") || "jpg";
-    const dest = `${IMAGE_DIR}${Date.now()}-${Math.random()
-      .toString(36)
-      .slice(2, 8)}.${ext}`;
-    await FileSystem.copyAsync({ from: uri, to: dest });
+    const dest = `${IMAGE_DIR}${newPhotoName(ext)}`;
+    await FileSystem.copyAsync({ from: source, to: dest });
     return dest;
   } catch (e) {
     console.error("Failed to persist image, using original URI:", e);
@@ -55,9 +129,29 @@ export const persistImage = async (uri) => {
   }
 };
 
-// Best-effort delete of a persisted image (ignores anything we don't own).
+// A name from the server's copy is untrusted: it becomes a path on this phone.
+export const isSafePhotoName = (name) =>
+  typeof name === "string" &&
+  /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(name) &&
+  !name.includes("..");
+
+// A photo's file name, which is how the home server knows it. Only for files in
+// our own folders; anything else isn't ours to send.
+export const photoFileName = (uri) => {
+  const name = isPersistedImage(uri) ? uri.split("/").pop() : null;
+  return isSafePhotoName(name) ? name : null;
+};
+
+// Where a photo with this name lives on this phone (null on web).
+export const photoPath = (name) =>
+  IMAGE_DIR && isSafePhotoName(name) ? `${IMAGE_DIR}${name}` : null;
+
+export const ensureImageDir = ensureDir;
+
+// Best-effort delete of a persisted image (ignores anything we don't own). The
+// server sweeps its own photos once no kept copy names them.
 export const deleteImage = async (uri) => {
-  if (!isPersistedImage(uri)) {
+  if (IN_BROWSER || !isPersistedImage(uri)) {
     return;
   }
   try {

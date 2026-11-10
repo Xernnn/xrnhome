@@ -12,12 +12,22 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useInventory } from "../context/InventoryContext";
 import { useTheme } from "../context/ThemeContext";
 import { haptics } from "../utils/haptics";
-import { SPACING, RADIUS } from "../utils/constants";
+import { pickDate } from "../utils/datePicker";
+import { SPACING, SHADOW } from "../utils/constants";
 
-const UNDO_DURATION = 4500;
+const SHOW_FOR = { delete: 4500, change: 4500, expiry: 7000, notice: 3000 };
+const ICONS = {
+  delete: "trash-can-outline",
+  change: "undo-variant",
+  expiry: "calendar-alert",
+  notice: "information-outline",
+};
+const ACTIONS = { delete: "Undo", change: "Undo", expiry: "Set date" };
 
+// The one toast: a deletion or a costly step that can be undone, a new expiry
+// date that's needed, or a word about what just happened.
 export default function UndoToast() {
-  const { undo, undoDelete, clearUndo } = useInventory();
+  const { undo, undoDelete, clearUndo, updateItem } = useInventory();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => createStyles(colors), [colors]);
@@ -26,13 +36,10 @@ export default function UndoToast() {
   const translateY = useRef(new Animated.Value(20)).current;
   const timerRef = useRef(null);
 
-  const visible = !!undo;
-  const itemName = undo?.item?.name;
-
   useEffect(() => {
-    if (visible) {
+    if (undo) {
       AccessibilityInfo.announceForAccessibility?.(
-        `${itemName || "Item"} deleted. Undo available.`
+        ACTIONS[undo.type] ? `${undo.label}. ${ACTIONS[undo.type]} available.` : undo.label
       );
       Animated.parallel([
         Animated.timing(opacity, {
@@ -46,9 +53,7 @@ export default function UndoToast() {
         }),
       ]).start();
 
-      timerRef.current = setTimeout(() => {
-        clearUndo();
-      }, UNDO_DURATION);
+      timerRef.current = setTimeout(clearUndo, SHOW_FOR[undo.type] || 4500);
     } else {
       opacity.setValue(0);
       translateY.setValue(20);
@@ -60,48 +65,57 @@ export default function UndoToast() {
         timerRef.current = null;
       }
     };
-  }, [visible, itemName, clearUndo, opacity, translateY]);
+  }, [undo, clearUndo, opacity, translateY]);
 
-  if (!visible) {
+  if (!undo) {
     return null;
   }
 
-  const handleUndo = () => {
+  const handleAction = async () => {
     haptics.light();
-    if (timerRef.current) {
-      clearTimeout(timerRef.current);
-      timerRef.current = null;
+    if (undo.type !== "expiry") {
+      undoDelete();
+      return;
     }
-    undoDelete();
+    const { id } = undo;
+    clearUndo();
+    const picked = await pickDate(new Date());
+    if (picked) {
+      updateItem(id, { expiryDate: picked.toISOString() }, { action: "Set the expiry date" });
+    }
   };
+
+  const action = ACTIONS[undo.type];
 
   return (
     <Animated.View
       style={[
         styles.container,
-        { bottom: insets.bottom + 72, opacity, transform: [{ translateY }] },
+        { bottom: insets.bottom + 82, opacity, transform: [{ translateY }] },
       ]}
       pointerEvents="box-none"
     >
       <Animated.View style={styles.toast}>
         <MaterialCommunityIcons
-          name="trash-can-outline"
+          name={ICONS[undo.type]}
           size={18}
-          color={colors.white}
+          color={colors.inverseText}
         />
-        <Text style={styles.text} numberOfLines={1}>
-          {itemName ? `"${itemName}" deleted` : "Item deleted"}
+        <Text style={styles.text} numberOfLines={2}>
+          {undo.label}
         </Text>
-        <TouchableOpacity
-          onPress={handleUndo}
-          activeOpacity={0.7}
-          style={styles.undoButton}
-          accessibilityRole="button"
-          accessibilityLabel="Undo delete"
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        >
-          <Text style={styles.undoText}>UNDO</Text>
-        </TouchableOpacity>
+        {action ? (
+          <TouchableOpacity
+            onPress={handleAction}
+            activeOpacity={0.7}
+            style={styles.actionButton}
+            accessibilityRole="button"
+            accessibilityLabel={action}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Text style={styles.actionText}>{action}</Text>
+          </TouchableOpacity>
+        ) : null}
       </Animated.View>
     </Animated.View>
   );
@@ -118,32 +132,27 @@ const createStyles = (colors) =>
     toast: {
       flexDirection: "row",
       alignItems: "center",
-      backgroundColor: "#323232",
-      borderRadius: RADIUS.button,
-      paddingVertical: 12,
-      paddingHorizontal: SPACING.card,
+      backgroundColor: colors.inverseSurface,
+      borderRadius: 16,
+      paddingVertical: 14,
+      paddingHorizontal: 16,
       width: "100%",
-      shadowColor: "#000",
-      shadowOffset: { width: 0, height: 3 },
-      shadowOpacity: 0.3,
-      shadowRadius: 8,
-      elevation: 6,
+      ...SHADOW,
     },
     text: {
       flex: 1,
-      color: colors.white,
+      color: colors.inverseText,
       fontSize: 14,
-      fontWeight: "600",
-      marginLeft: SPACING.inner,
+      fontWeight: "500",
+      marginLeft: 10,
     },
-    undoButton: {
+    actionButton: {
       paddingHorizontal: SPACING.inner,
       paddingVertical: 4,
     },
-    undoText: {
-      color: "#80CBC4",
-      fontSize: 14,
-      fontWeight: "800",
-      letterSpacing: 0.5,
+    actionText: {
+      color: colors.inverseAccent,
+      fontSize: 15,
+      fontWeight: "600",
     },
   });

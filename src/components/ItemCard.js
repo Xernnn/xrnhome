@@ -1,218 +1,204 @@
-import React, { useMemo } from "react";
-import {
-  View,
-  Text,
-  Image,
-  TouchableOpacity,
-  StyleSheet,
-} from "react-native";
+import React, { memo, useMemo, useRef } from "react";
+import { Platform, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
+
 import {
+  FONTS,
+  OPENED_STEP,
+  PACK_BUTTON_INK,
+  PACK_INK,
+  PACK_OUT,
   RADIUS,
-  SHADOW,
-  getCategoryMeta,
+  countText,
   hexToRgba,
   isExpiringSoon,
+  isOnBuyList,
   isTrackingOpened,
+  unitFor,
 } from "../utils/constants";
-import { useTheme } from "../context/ThemeContext";
+import { usePackShade } from "../utils/packColourCache";
 import ExpiryPill from "./ExpiryPill";
+import PackPhoto from "./PackPhoto";
+import { Stepper } from "./QuantityControl";
+import { Pop } from "./ui";
 
-export default function ItemCard({ item, width, onPress, onStep }) {
-  const { colors } = useTheme();
-  const styles = useMemo(() => createStyles(colors), [colors]);
+export const CARD_PADDING = 8;
+const LARGE_FROM = 200; // a card this wide has room for bigger words and buttons
 
-  const meta = getCategoryMeta(item.category);
-  const hasImage = !!item.imageUri;
-  // A % item always shows its open unit, so the number on the card never
-  // switches between a percentage and a count.
+// On a laptop the cart button waits for the pointer. A touch screen has no pointer.
+const CARD_WEB = Platform.OS === "web" ? { dataSet: { card: "1" } } : null;
+const CART_WEB = Platform.OS === "web" ? { dataSet: { cart: "1" } } : null;
+
+// One item, on a card in the colour of its pack: the photo in an arch, the name,
+// how many are left and the buttons that change that. Memoized, with stable
+// callbacks from the screen, so a tap redraws this card and not the whole room.
+function ItemCard({ item, width, onOpen, onStep, onBuy, onList }) {
+  const large = width >= LARGE_FROM;
+  const styles = useMemo(() => createStyles(large), [large]);
+  const shade = usePackShade(item);
+  const photo = useRef(null);
+
   const tracking = isTrackingOpened(item);
-
-  const bigValue = tracking ? `${item.openedPercent}%` : `${item.quantity}`;
-  const caption = tracking ? `${item.quantity} ${item.unit}` : item.unit;
-  const decreaseLabel = tracking ? "Use 10 percent" : `Use one ${item.unit}`;
-  const increaseLabel = tracking ? "Add 10 percent" : `Add one ${item.unit}`;
-
-  const handleStep = (dir) => {
-    if (onStep) {
-      onStep(item, dir);
-    }
-  };
+  const listed = isOnBuyList(item);
+  const expiring = isExpiringSoon(item);
+  const out = item.quantity <= 0;
+  const summary = `${item.name}, ${countText(item.quantity, item.unit)}${
+    tracking && !out ? `, ${item.openedPercent}% left in the open one` : ""
+  }${listed ? ", on the shopping list" : ""}`;
 
   return (
     <TouchableOpacity
-      activeOpacity={0.7}
-      style={[styles.card, { width }]}
-      onPress={onPress}
+      activeOpacity={0.85}
+      style={[styles.card, { backgroundColor: out ? PACK_OUT : shade }]}
+      onPress={() => onOpen(item.id)}
       accessibilityRole="button"
-      accessibilityLabel={`${item.name}, ${item.quantity} ${item.unit}. Open details`}
+      accessibilityLabel={summary}
+      accessibilityHint="Opens the item"
+      {...CARD_WEB}
     >
-      <View style={[styles.imageWrap, { height: Math.round(width * 0.8) }]}>
-        {hasImage ? (
-          <Image source={{ uri: item.imageUri }} style={styles.image} />
-        ) : (
-          <View
-            style={[
-              styles.placeholder,
-              { backgroundColor: hexToRgba(meta.color, 0.18) },
-            ]}
-          >
-            <MaterialCommunityIcons
-              name={meta.icon}
-              size={32}
-              color={meta.color}
-            />
-          </View>
-        )}
-
-        {item.recurring ? (
-          <View style={styles.recurringBadge}>
-            <MaterialCommunityIcons
-              name="cart"
-              size={11}
-              color={colors.white}
-            />
+      <PackPhoto item={item} width={width - CARD_PADDING * 2} photoRef={photo}>
+        {out || listed ? (
+          <View style={styles.tag}>
+            <Text style={styles.tagText} numberOfLines={1} maxFontSizeMultiplier={1.2}>
+              {out ? "Ran out" : "On the list"}
+            </Text>
           </View>
         ) : null}
+        <TouchableOpacity
+          activeOpacity={0.7}
+          style={[styles.cart, listed && styles.cartListed]}
+          onPress={() => onList(item.id, photo.current)}
+          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+          accessibilityRole="button"
+          accessibilityLabel={
+            listed ? `Take ${item.name} off the shopping list` : `Put ${item.name} on the shopping list`
+          }
+          {...(listed ? null : CART_WEB)}
+        >
+          <MaterialCommunityIcons
+            name={listed ? "cart" : "cart-plus"}
+            size={large ? 20 : 17}
+            color={listed ? PACK_BUTTON_INK : PACK_INK}
+          />
+        </TouchableOpacity>
+      </PackPhoto>
 
-        {isExpiringSoon(item) ? (
-          <View style={styles.expiryBadge}>
-            <ExpiryPill item={item} />
-          </View>
-        ) : null}
-      </View>
-
-      <Text style={styles.name} numberOfLines={2}>
+      <Text style={styles.name} numberOfLines={2} maxFontSizeMultiplier={1.3}>
         {item.name}
       </Text>
-
-      <View style={styles.controlRow}>
-        <TouchableOpacity
-          activeOpacity={0.7}
-          style={styles.stepButton}
-          onPress={() => handleStep(-1)}
-          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-          accessibilityRole="button"
-          accessibilityLabel={decreaseLabel}
-        >
-          <MaterialCommunityIcons name="minus" size={14} color={colors.accent} />
-        </TouchableOpacity>
-
-        <View style={styles.valueWrap}>
-          <Text
-            style={styles.value}
-            numberOfLines={1}
-            adjustsFontSizeToFit
-            minimumFontScale={0.75}
-          >
-            {bigValue}
-          </Text>
-          <Text
-            style={styles.valueCaption}
-            numberOfLines={1}
-            adjustsFontSizeToFit
-            minimumFontScale={0.8}
-          >
-            {caption}
-          </Text>
+      {expiring ? (
+        <View style={styles.expiry}>
+          <ExpiryPill item={item} />
         </View>
+      ) : null}
 
-        <TouchableOpacity
-          activeOpacity={0.7}
-          style={styles.stepButton}
-          onPress={() => handleStep(1)}
-          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-          accessibilityRole="button"
-          accessibilityLabel={increaseLabel}
-        >
-          <MaterialCommunityIcons name="plus" size={14} color={colors.accent} />
-        </TouchableOpacity>
+      <View style={styles.spacer} />
+      <View style={styles.foot}>
+        <Pop value={item.quantity} style={styles.count}>
+          <Text style={styles.number} numberOfLines={1} maxFontSizeMultiplier={1.2}>
+            {item.quantity}
+          </Text>
+          <Text style={styles.unit} numberOfLines={1} maxFontSizeMultiplier={1.2}>
+            {unitFor(item.quantity, item.unit)}
+          </Text>
+        </Pop>
+        <Stepper
+          onPack
+          size={large ? 40 : 32}
+          onMinus={() => onStep(item.id, -1)}
+          onPlus={() => onStep(item.id, 1)}
+          onPlusHold={() => onBuy(item.id)}
+          minusDisabled={out}
+          minusLabel={tracking ? `Use ${OPENED_STEP} percent of ${item.name}` : `Use one ${item.name}`}
+          plusLabel={
+            tracking && !out && item.openedPercent < 100
+              ? `Add ${OPENED_STEP} percent to ${item.name}. Hold to add a new one`
+              : `Add one ${item.name}`
+          }
+        />
       </View>
     </TouchableOpacity>
   );
 }
 
-const createStyles = (colors) =>
+export default memo(ItemCard);
+
+const createStyles = (large) =>
   StyleSheet.create({
     card: {
-      backgroundColor: colors.surface,
+      flex: 1,
+      padding: CARD_PADDING,
       borderRadius: RADIUS.card,
-      overflow: "hidden",
-      ...SHADOW,
     },
-    imageWrap: {
-      width: "100%",
-      backgroundColor: colors.surfaceAlt,
-    },
-    image: {
-      width: "100%",
-      height: "100%",
-      resizeMode: "cover",
-    },
-    placeholder: {
-      width: "100%",
-      height: "100%",
-      alignItems: "center",
-      justifyContent: "center",
-    },
-    recurringBadge: {
+    tag: {
       position: "absolute",
-      top: 6,
-      left: 6,
-      width: 20,
-      height: 20,
-      borderRadius: 10,
-      backgroundColor: colors.accent,
-      alignItems: "center",
-      justifyContent: "center",
-      ...SHADOW,
-    },
-    // ExpiryPill's tint is see-through, so it gets a solid backing over photos.
-    expiryBadge: {
-      position: "absolute",
-      top: 6,
-      right: 6,
+      left: 8,
+      bottom: 8,
+      maxWidth: "70%",
+      paddingHorizontal: 8,
+      paddingVertical: 2,
       borderRadius: RADIUS.pill,
-      backgroundColor: colors.surface,
-      ...SHADOW,
+      backgroundColor: PACK_INK,
+    },
+    tagText: {
+      fontSize: 11.5,
+      fontWeight: "700",
+      color: PACK_BUTTON_INK,
+    },
+    cart: {
+      position: "absolute",
+      right: 8,
+      bottom: 8,
+      width: large ? 36 : 30,
+      height: large ? 36 : 30,
+      borderRadius: RADIUS.pill,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: "rgba(0,0,0,0.5)",
+    },
+    cartListed: {
+      backgroundColor: PACK_INK,
     },
     name: {
-      fontSize: 12,
+      marginTop: 8,
+      paddingHorizontal: 4,
+      fontSize: large ? 20 : 15.5,
+      lineHeight: large ? 25 : 20,
       fontWeight: "700",
-      color: colors.textPrimary,
-      lineHeight: 15,
-      height: 30,
-      marginHorizontal: 8,
-      marginTop: 6,
+      color: PACK_INK,
     },
-    controlRow: {
+    expiry: {
+      marginTop: 4,
+      paddingHorizontal: 4,
+    },
+    spacer: {
+      flexGrow: 1,
+      minHeight: 4,
+    },
+    foot: {
       flexDirection: "row",
+      flexWrap: "wrap",
       alignItems: "center",
       justifyContent: "space-between",
-      paddingHorizontal: 4,
-      paddingBottom: 6,
-      paddingTop: 2,
+      paddingLeft: 4,
     },
-    stepButton: {
-      width: 24,
-      height: 24,
-      borderRadius: 12,
-      backgroundColor: colors.accentLight,
-      alignItems: "center",
-      justifyContent: "center",
+    count: {
+      flexDirection: "row",
+      alignItems: "baseline",
+      flexShrink: 1,
+      minWidth: 0,
+      marginRight: 4,
     },
-    valueWrap: {
-      flex: 1,
-      alignItems: "center",
-      justifyContent: "center",
+    number: {
+      fontFamily: FONTS.mono,
+      fontSize: large ? 38 : 28,
+      color: PACK_INK,
     },
-    value: {
-      fontSize: 14,
-      fontWeight: "800",
-      color: colors.textPrimary,
-    },
-    valueCaption: {
-      fontSize: 9,
-      color: colors.textSecondary,
+    unit: {
+      flexShrink: 1,
+      marginLeft: 4,
+      fontSize: large ? 14 : 12,
+      fontWeight: "600",
+      color: hexToRgba(PACK_INK, 0.85),
     },
   });

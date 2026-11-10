@@ -1,13 +1,9 @@
 {
   "cli": {
     "version": ">= 20.4.0",
-    "appVersionSource": "remote"
+    "appVersionSource": "local"
   },
   "build": {
-    "development": {
-      "developmentClient": true,
-      "distribution": "internal"
-    },
     "preview": {
       "distribution": "internal",
       "android": {

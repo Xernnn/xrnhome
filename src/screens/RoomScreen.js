@@ -1,89 +1,204 @@
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
-  View,
-  Text,
+  FlatList,
   ScrollView,
+  Text,
   TouchableOpacity,
+  View,
   StyleSheet,
   useWindowDimensions,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 
-import { useInventory, computeStep } from "../context/InventoryContext";
+import { useInventory } from "../context/InventoryContext";
 import { useTheme } from "../context/ThemeContext";
 import SearchBar from "../components/SearchBar";
 import ItemCard from "../components/ItemCard";
-import CategoryBlobGrid, { BLOB_HALF_GAP } from "../components/CategoryBlobGrid";
+import {
+  GRID_GAP,
+  GRID_GUTTER,
+  GridHeader,
+  GridRow,
+  buildRows,
+  cardWidthFor,
+} from "../components/CategoryGrid";
 import EmptyState from "../components/EmptyState";
+import { Chip, PageTitle, RoundIconButton } from "../components/ui";
 import { haptics } from "../utils/haptics";
 import {
+  RADIUS,
+  ROOMS,
+  PAGE_WIDTH,
   SPACING,
+  TYPE,
   daysUntilExpiry,
+  getExpiryStatus,
   getRoomCategories,
   getRoomMeta,
   isExpiringSoon,
   isInStock,
+  itemCount,
 } from "../utils/constants";
 
-// Blobs reach out to the usual screen margin; their inner gap sits inside it.
-const GRID_SIDE_PADDING = SPACING.screen - BLOB_HALF_GAP;
+// The narrowest a card can be before its words and buttons run out of room. A
+// window with space to spare keeps its cards at the larger size.
+const MIN_CARD_WIDTH = 150;
+const MIN_ROOMY_CARD_WIDTH = 230;
+const ROOMY_FROM = 640;
 
-export default function RoomScreen({ navigation, route }) {
+const groupByCategory = (list, room) => {
+  const categories = getRoomCategories(room);
+  const byLabel = new Map(categories.map((cat) => [cat.label, []]));
+  list.forEach((item) => {
+    (byLabel.get(item.category) || byLabel.get("Other")).push(item);
+  });
+  return categories
+    .map((cat) => ({ meta: cat, items: byLabel.get(cat.label) }))
+    .filter((group) => group.items.length > 0);
+};
+
+// `onListed` hears about what went on the shopping list, and from which photo.
+export default function RoomScreen({ navigation, route, onListed }) {
   const room = getRoomMeta(route.params && route.params.room);
-  const { items, updateItem } = useInventory();
+  const { items, stepItem, buyItem, toggleOnList } = useInventory();
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
-  const { width: windowWidth } = useWindowDimensions();
+  const { width, fontScale } = useWindowDimensions();
+  // What the page was given, which on a laptop is less than the window.
+  const [measured, setMeasured] = useState(0);
+  const pageWidth = measured || Math.min(width, PAGE_WIDTH);
+  const shown = pageWidth / fontScale;
+  const smallest = shown >= ROOMY_FROM ? MIN_ROOMY_CARD_WIDTH : MIN_CARD_WIDTH;
+  const columns = Math.max(
+    2,
+    Math.floor((shown - GRID_GUTTER * 2 + GRID_GAP) / (smallest + GRID_GAP))
+  );
+  const cardWidth = cardWidthFor(pageWidth, columns);
 
   const [search, setSearch] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
+  const [expiringOnly, setExpiringOnly] = useState(false);
+  const [chosen, setChosen] = useState(null);
 
-  const roomItems = useMemo(
-    () => items.filter((item) => item.room === room.key && isInStock(item)),
+  const allInRoom = useMemo(
+    () => items.filter((item) => item.room === room.key),
     [items, room.key]
   );
+  const inStock = useMemo(() => allInRoom.filter(isInStock), [allInRoom]);
+  const query = search.trim().toLowerCase();
+  const searching = query.length > 0;
 
-  const filteredItems = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    if (query.length === 0) {
-      return roomItems;
+  // Soonest first. Tapping the banner narrows the page to these, so nothing on
+  // the page is ever shown twice.
+  const expiring = useMemo(
+    () =>
+      inStock
+        .filter(isExpiringSoon)
+        .sort((a, b) => daysUntilExpiry(a) - daysUntilExpiry(b)),
+    [inStock]
+  );
+  const showingExpiring = expiringOnly && expiring.length > 0 && !searching;
+
+  const byCategory = useMemo(
+    () => groupByCategory(inStock, room.key),
+    [inStock, room.key]
+  );
+  // A category that has just run out of items lets go of the filter.
+  const category = byCategory.some((group) => group.meta.label === chosen)
+    ? chosen
+    : null;
+
+  // A search looks through everything, in every room, in stock or not.
+  const groups = useMemo(() => {
+    if (searching) {
+      const matches = items.filter((item) =>
+        item.name.toLowerCase().includes(query)
+      );
+      return ROOMS.map((entry) => ({
+        meta: { label: entry.label, icon: entry.icon, color: colors.textSecondary },
+        items: matches.filter((item) => item.room === entry.key),
+      })).filter((group) => group.items.length > 0);
     }
-    return roomItems.filter((item) =>
-      item.name.toLowerCase().includes(query)
-    );
-  }, [roomItems, search]);
-
-  // Items that are expired or close to it, soonest first, pinned above the
-  // categories in a blob of their own. They still show in their category too.
-  const expiringGroup = useMemo(() => {
-    const expiring = filteredItems
-      .filter(isExpiringSoon)
-      .sort((a, b) => daysUntilExpiry(a) - daysUntilExpiry(b));
-    if (expiring.length === 0) {
-      return [];
+    if (showingExpiring) {
+      return [
+        {
+          meta: {
+            label: "Expiring soon",
+            icon: "clock-alert-outline",
+            color: colors.warning,
+          },
+          items: expiring,
+        },
+      ];
     }
-    const meta = {
-      label: "Expiring soon",
-      icon: "clock-alert-outline",
-      color: colors.warning,
-    };
-    return [{ meta, items: expiring }];
-  }, [filteredItems, colors.warning]);
+    // The chips name the categories, so the cards run on with no heading between
+    // them: a category of one would otherwise sit alone on its row.
+    const shown = byCategory
+      .filter((group) => !category || group.meta.label === category)
+      .flatMap((group) => group.items);
+    return shown.length > 0 ? [{ meta: null, items: shown }] : [];
+  }, [searching, query, items, showingExpiring, expiring, byCategory, category, colors]);
 
-  const groupedByCategory = useMemo(() => {
-    const categories = getRoomCategories(room.key);
-    const byLabel = new Map(categories.map((cat) => [cat.label, []]));
-    filteredItems.forEach((item) => {
-      (byLabel.get(item.category) || byLabel.get("Other")).push(item);
-    });
-    return categories
-      .map((cat) => ({ meta: cat, items: byLabel.get(cat.label) }))
-      .filter((group) => group.items.length > 0);
-  }, [filteredItems, room.key]);
+  const rows = useMemo(() => buildRows(groups, columns), [groups, columns]);
+  const shownCount = groups.reduce((sum, group) => sum + group.items.length, 0);
 
-  const openAddItem = () => navigation.navigate("AddItem", { room: room.key });
-  const openDetail = (id) => navigation.navigate("ItemDetail", { itemId: id });
+  const openAddItem = useCallback(
+    () => navigation.navigate("AddItem", { room: room.key }),
+    [navigation, room.key]
+  );
+  const openDetail = useCallback(
+    (id) => navigation.navigate("ItemDetail", { itemId: id }),
+    [navigation]
+  );
+  const handleStep = useCallback(
+    (id, dir) => {
+      haptics.light();
+      stepItem(id, dir);
+    },
+    [stepItem]
+  );
+  const handleBuy = useCallback(
+    (id) => {
+      haptics.success();
+      buyItem(id, 1);
+    },
+    [buyItem]
+  );
+
+  const handleList = useCallback(
+    (id, photo) => {
+      haptics.light();
+      if (toggleOnList(id) && onListed) {
+        onListed(photo);
+      }
+    },
+    [toggleOnList, onListed]
+  );
+
+  const renderCard = useCallback(
+    (item) => (
+      <ItemCard
+        item={item}
+        width={cardWidth}
+        onOpen={openDetail}
+        onStep={handleStep}
+        onBuy={handleBuy}
+        onList={handleList}
+      />
+    ),
+    [cardWidth, openDetail, handleStep, handleBuy, handleList]
+  );
+
+  const renderRow = useCallback(
+    ({ item: row }) =>
+      row.type === "header" ? (
+        <GridHeader meta={row.meta} count={row.count} />
+      ) : (
+        <GridRow row={row} columns={columns} renderCard={renderCard} />
+      ),
+    [columns, renderCard]
+  );
 
   const toggleSearch = () => {
     setSearchOpen((prev) => {
@@ -94,111 +209,166 @@ export default function RoomScreen({ navigation, route }) {
     });
   };
 
-  const handleStep = (item, dir) => {
-    const result = computeStep(item, dir);
-    if (result.changes) {
-      haptics.light();
-      updateItem(item.id, result.changes, result.historyEntry);
+  // A list that shrinks while scrolled down would otherwise be left looking at
+  // nothing, below its new end.
+  const list = useRef(null);
+  const offset = useRef(0);
+  const viewport = useRef(0);
+  const onContentSize = (_, contentHeight) => {
+    const end = Math.max(0, contentHeight - viewport.current);
+    if (offset.current > end) {
+      list.current?.scrollToOffset({ offset: end, animated: false });
     }
   };
 
-  const renderCard = (item, cardWidth) => (
-    <ItemCard
-      item={item}
-      width={cardWidth}
-      onPress={() => openDetail(item.id)}
-      onStep={handleStep}
-    />
-  );
-  const gridWidth = windowWidth - GRID_SIDE_PADDING * 2;
-
-  const hasAnyItems = roomItems.length > 0;
-  const totalFiltered = filteredItems.length;
-
-  return (
-    <SafeAreaView style={styles.safe} edges={["top"]}>
-      <View style={styles.header}>
-        <View style={styles.headerLeft}>
-          <Text style={styles.logo}>{room.label}</Text>
-          <Text style={styles.subtitle}>
-            {roomItems.length} {roomItems.length === 1 ? "item" : "items"} in
-            your {room.label.toLowerCase()}
+  const banner =
+    !searching && expiring.length > 0 ? (
+      <TouchableOpacity
+        activeOpacity={0.7}
+        style={[styles.banner, showingExpiring && styles.bannerActive]}
+        onPress={() => setExpiringOnly((prev) => !prev)}
+        accessibilityRole="button"
+        accessibilityState={{ selected: showingExpiring }}
+      >
+        <MaterialCommunityIcons
+          name={
+            expiring.some((item) => getExpiryStatus(item) === "expired")
+              ? "alert-circle"
+              : "clock-alert-outline"
+          }
+          size={20}
+          color={colors.warning}
+        />
+        <View style={styles.bannerText}>
+          <Text style={styles.bannerTitle} numberOfLines={1}>
+            {expiring.length} expiring soon
+          </Text>
+          <Text style={styles.bannerNames} numberOfLines={1}>
+            {expiring.map((item) => item.name).join(", ")}
           </Text>
         </View>
-        <View style={styles.headerActions}>
-          <TouchableOpacity
-            activeOpacity={0.7}
-            style={[styles.iconButton, searchOpen && styles.iconButtonActive]}
-            onPress={toggleSearch}
-          >
-            <MaterialCommunityIcons
-              name={searchOpen ? "close" : "magnify"}
-              size={22}
-              color={searchOpen ? colors.accent : colors.textPrimary}
-            />
-          </TouchableOpacity>
-        </View>
-      </View>
+        <Text style={styles.bannerAction}>{showingExpiring ? "Show all" : "Show"}</Text>
+      </TouchableOpacity>
+    ) : null;
 
-      {!hasAnyItems ? (
-        <EmptyState
-          icon={room.emptyIcon}
-          title={`Your ${room.label.toLowerCase()} is empty`}
-          actionLabel="Add your first item"
-          onAction={openAddItem}
+  const outOfStock = allInRoom.length - inStock.length;
+
+  const empty = searching ? (
+    <EmptyState
+      icon="magnify"
+      title="Nothing by that name"
+      subtitle="Search looks through both types of item, in stock or not."
+    />
+  ) : allInRoom.length > 0 ? (
+    <EmptyState
+      icon="cart-outline"
+      title="Nothing in stock"
+      subtitle={`${itemCount(outOfStock)} ran out. You'll find them on the Shopping tab.`}
+      actionLabel="Open Shopping"
+      actionIcon="cart-outline"
+      onAction={() => navigation.navigate("Shopping")}
+    />
+  ) : (
+    <EmptyState
+      icon={room.emptyIcon}
+      title={room.emptyTitle}
+      actionLabel="Add your first item"
+      onAction={openAddItem}
+    />
+  );
+
+  const chips =
+    !searching && !showingExpiring && byCategory.length > 1 ? (
+      <ScrollView
+        horizontal
+        style={styles.chips}
+        contentContainerStyle={styles.chipsInner}
+        showsHorizontalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+        <Chip
+          label="All"
+          count={inStock.length}
+          selected={!category}
+          onPress={() => setChosen(null)}
         />
+        {byCategory.map(({ meta, items: inCategory }) => (
+          <Chip
+            key={meta.label}
+            label={meta.label}
+            count={inCategory.length}
+            selected={category === meta.label}
+            onPress={() => setChosen(category === meta.label ? null : meta.label)}
+          />
+        ))}
+      </ScrollView>
+    ) : null;
+
+  return (
+    <SafeAreaView
+      style={styles.safe}
+      edges={["top"]}
+      onLayout={(event) => setMeasured(event.nativeEvent.layout.width)}
+    >
+      <PageTitle
+        title={room.label.toLowerCase()}
+        subtitle={itemCount(inStock.length)}
+        actions={
+          <>
+            <RoundIconButton
+              icon={searchOpen ? "close" : "magnify"}
+              label={searchOpen ? "Close search" : "Search"}
+              outlined
+              active={searchOpen}
+              onPress={toggleSearch}
+            />
+            <RoundIconButton
+              icon="plus"
+              label={`Add to ${room.label}`}
+              outlined
+              onPress={openAddItem}
+            />
+          </>
+        }
+      />
+
+      {searchOpen ? (
+        <View style={styles.searchWrap}>
+          <SearchBar value={search} onChangeText={setSearch} autoFocus />
+          {searching && shownCount > 0 ? (
+            <Text style={styles.resultCount}>Found {itemCount(shownCount)}</Text>
+          ) : null}
+        </View>
+      ) : null}
+
+      {chips}
+
+      {rows.length === 0 ? (
+        empty
       ) : (
-        <ScrollView
-          style={styles.scroll}
-          contentContainerStyle={styles.scrollContent}
+        <FlatList
+          ref={list}
+          style={styles.list}
+          data={rows}
+          keyExtractor={(row) => row.key}
+          renderItem={renderRow}
+          ListHeaderComponent={banner}
+          ListFooterComponent={<View style={styles.bottomSpacer} />}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
-        >
-          {searchOpen ? (
-            <View style={styles.searchWrap}>
-              <SearchBar value={search} onChangeText={setSearch} autoFocus />
-            </View>
-          ) : null}
-
-          {groupedByCategory.length === 0 ? (
-            <EmptyState icon="magnify" title="No matches found" />
-          ) : (
-            <>
-              {searchOpen ? (
-                <Text style={styles.resultCount}>
-                  Showing {totalFiltered}{" "}
-                  {totalFiltered === 1 ? "item" : "items"}
-                </Text>
-              ) : null}
-              {expiringGroup.length > 0 ? (
-                <View style={styles.grid}>
-                  <CategoryBlobGrid
-                    groups={expiringGroup}
-                    width={gridWidth}
-                    renderItem={renderCard}
-                  />
-                </View>
-              ) : null}
-              <View style={styles.grid}>
-                <CategoryBlobGrid
-                  groups={groupedByCategory}
-                  width={gridWidth}
-                  renderItem={renderCard}
-                />
-              </View>
-            </>
-          )}
-          <View style={styles.bottomSpacer} />
-        </ScrollView>
+          initialNumToRender={10}
+          maxToRenderPerBatch={8}
+          windowSize={7}
+          onLayout={(event) => {
+            viewport.current = event.nativeEvent.layout.height;
+          }}
+          onScroll={(event) => {
+            offset.current = event.nativeEvent.contentOffset.y;
+          }}
+          scrollEventThrottle={64}
+          onContentSizeChange={onContentSize}
+        />
       )}
-
-      <TouchableOpacity
-        activeOpacity={0.8}
-        style={styles.fab}
-        onPress={openAddItem}
-      >
-        <MaterialCommunityIcons name="plus" size={30} color={colors.white} />
-      </TouchableOpacity>
     </SafeAreaView>
   );
 }
@@ -209,79 +379,66 @@ const createStyles = (colors) =>
       flex: 1,
       backgroundColor: colors.background,
     },
-    header: {
-      flexDirection: "row",
-      alignItems: "center",
-      justifyContent: "space-between",
+    list: {
+      flex: 1,
+    },
+    chips: {
+      flexGrow: 0,
+      flexShrink: 0,
+    },
+    chipsInner: {
       paddingHorizontal: SPACING.screen,
-      paddingVertical: 12,
-    },
-    headerLeft: {
-      flex: 1,
-    },
-    logo: {
-      fontSize: 24,
-      fontWeight: "800",
-      color: colors.accent,
-    },
-    subtitle: {
-      fontSize: 13,
-      color: colors.textSecondary,
-      marginTop: 2,
-    },
-    headerActions: {
-      flexDirection: "row",
-      alignItems: "center",
-    },
-    iconButton: {
-      width: 44,
-      height: 44,
-      borderRadius: 22,
-      backgroundColor: colors.surfaceAlt,
-      alignItems: "center",
-      justifyContent: "center",
-      marginRight: SPACING.inner,
-    },
-    iconButtonActive: {
-      backgroundColor: colors.accentLight,
-    },
-    scroll: {
-      flex: 1,
-    },
-    scrollContent: {
-      paddingBottom: 8,
+      paddingTop: 4,
+      paddingBottom: 10,
+      gap: 6,
     },
     searchWrap: {
       paddingHorizontal: SPACING.screen,
-      marginBottom: SPACING.inner,
+      paddingTop: 2,
+      paddingBottom: 6,
     },
     resultCount: {
-      fontSize: 13,
+      ...TYPE.caption,
       color: colors.textSecondary,
-      paddingHorizontal: SPACING.screen,
-      marginBottom: 4,
+      marginTop: 8,
+      marginLeft: 6,
     },
-    grid: {
-      paddingHorizontal: GRID_SIDE_PADDING,
-      paddingTop: SPACING.inner,
+    banner: {
+      flexDirection: "row",
+      alignItems: "center",
+      marginHorizontal: GRID_GUTTER,
+      marginBottom: GRID_GAP,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+      backgroundColor: colors.surface,
+      borderRadius: RADIUS.tile + 4,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    bannerActive: {
+      borderColor: colors.warning,
+    },
+    bannerText: {
+      flex: 1,
+      marginLeft: 12,
+    },
+    bannerTitle: {
+      ...TYPE.bodySmall,
+      fontWeight: "700",
+      color: colors.textPrimary,
+    },
+    bannerNames: {
+      ...TYPE.caption,
+      color: colors.textSecondary,
+      marginTop: 1,
+    },
+    bannerAction: {
+      ...TYPE.bodySmall,
+      fontWeight: "600",
+      color: colors.textPrimary,
+      marginLeft: 10,
     },
     bottomSpacer: {
-      height: 96,
-    },
-    fab: {
-      position: "absolute",
-      right: SPACING.screen,
-      bottom: SPACING.screen,
-      width: 60,
-      height: 60,
-      borderRadius: 30,
-      backgroundColor: colors.accent,
-      alignItems: "center",
-      justifyContent: "center",
-      shadowColor: "#000",
-      shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: 0.25,
-      shadowRadius: 8,
-      elevation: 6,
+      height: 24,
     },
   });
