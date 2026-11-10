@@ -28,7 +28,7 @@
         "android.permission.REQUEST_INSTALL_PACKAGES"
       ],
       "package": "com.xern.xrnhome",
-      "versionCode": 4,
+      "versionCode": 5,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundImage": "./assets/adaptive-icon-background.png",
