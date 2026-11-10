@@ -95,8 +95,7 @@
           "icon": "./assets/adaptive-icon-monochrome.png",
           "color": "#B8860B"
         }
-      ],
-      "./plugins/withXrnSigning"
+      ]
     ]
   }
 }
