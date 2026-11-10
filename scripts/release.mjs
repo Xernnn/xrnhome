@@ -79,7 +79,11 @@ if (built.versionCode !== versionCode) {
 const apkPath = join(APK_DIR, built.outputFile);
 const apk = readFileSync(apkPath);
 const cert = signerOf(apkPath);
-if (signer && cert && cert !== signer.toLowerCase().replace(/:/g, "")) {
+// Unchecked is as bad as wrong: a build signed with another key reaches the server, and the phone refuses it.
+if (signer && !cert) {
+  throw new Error("can't read the APK's signer to check it against release.json's: set ANDROID_HOME to the Android SDK");
+}
+if (signer && cert !== signer.toLowerCase().replace(/:/g, "")) {
   throw new Error(`the APK is signed by ${cert}, not the installed app's ${signer}: the phone would refuse it`);
 }
 const name = `xrnhome-${versionCode}.apk`;
