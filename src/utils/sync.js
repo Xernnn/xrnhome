@@ -30,6 +30,9 @@ const META_KEY = "xrnhome_sync_meta";
 // The server copy `version` names, in this device's own shape: what a merge
 // compares both sides against to tell who changed what.
 const BASE_KEY = "xrnhome_sync_base";
+// { id, items, categories }: the list that went to the server with write `id`,
+// whose answer hasn't come back. See takeServerCopy in SyncContext.
+const SENT_KEY = "xrnhome_sync_sent";
 // A photo that takes longer than this isn't coming. Without a limit a dead
 // connection would leave the app saying "Syncing…" for good.
 const PHOTO_TIMEOUT_MS = 90000;
@@ -45,7 +48,9 @@ const withinTime = (work, ms = PHOTO_TIMEOUT_MS) => {
 // { version: the server copy this phone's items match, or null; syncedAt;
 //   hash: of the items that copy holds, so an unchanged list isn't sent again;
 //   sent: the hash of a list that went to the server with no answer back yet, so
-//   this device knows its own write when it's the copy that comes down next }.
+//   this device knows its own write when it's the copy that comes down next;
+//   sentId: the id that write went with, which the server names for it under the
+//   writes that come after it }.
 export async function loadSyncMeta() {
   try {
     const raw = await AsyncStorage.getItem(META_KEY);
@@ -55,9 +60,10 @@ export async function loadSyncMeta() {
       syncedAt: typeof meta?.syncedAt === "string" ? meta.syncedAt : null,
       hash: typeof meta?.hash === "string" ? meta.hash : null,
       sent: typeof meta?.sent === "string" ? meta.sent : null,
+      sentId: typeof meta?.sentId === "string" ? meta.sentId : null,
     };
   } catch (error) {
-    return { version: null, syncedAt: null, hash: null, sent: null };
+    return { version: null, syncedAt: null, hash: null, sent: null, sentId: null };
   }
 }
 
@@ -92,9 +98,31 @@ export async function saveSyncState(meta, base) {
   }
 }
 
+// What's on its way to the server, saved with the meta that names it before it goes.
+export async function saveSyncSent(meta, sent) {
+  try {
+    await AsyncStorage.multiSet([
+      [META_KEY, JSON.stringify(meta)],
+      [SENT_KEY, JSON.stringify(sent)],
+    ]);
+  } catch (error) {
+    console.error("Failed to save the sync state:", error);
+  }
+}
+
+export async function loadSyncSent() {
+  try {
+    const raw = await AsyncStorage.getItem(SENT_KEY);
+    const sent = raw ? JSON.parse(raw) : null;
+    return typeof sent?.id === "string" && Array.isArray(sent.items) ? sent : null;
+  } catch (error) {
+    return null;
+  }
+}
+
 export async function clearSyncMeta() {
   try {
-    await AsyncStorage.multiRemove([META_KEY, BASE_KEY]);
+    await AsyncStorage.multiRemove([META_KEY, BASE_KEY, SENT_KEY]);
   } catch (error) {
     // nothing to forget
   }
@@ -176,8 +204,10 @@ async function uploadPhotos(server, items) {
 
 // Sends this phone's items on top of server copy `base` (null: this phone
 // never synced, which only goes through while the server is empty; "*":
-// replace whatever is there). Returns { version, hash } or { conflict: true }.
-export async function pushItems(server, items, base, categories) {
+// replace whatever is there), as write `writeId`, which the server names in the
+// copies after it (see fetchServerCopy). Returns { version, hash } or
+// { conflict: true }.
+export async function pushItems(server, items, base, categories, writeId) {
   // A browser's photos went to the server the moment they were picked.
   if (!server.browser) {
     await uploadPhotos(server, items);
@@ -187,6 +217,7 @@ export async function pushItems(server, items, base, categories) {
     headers: {
       "Content-Type": "application/json",
       "If-Match": base === "*" ? "*" : `"${base ?? 0}"`,
+      ...(writeId ? { "X-Write-Id": writeId } : {}),
     },
     body: JSON.stringify(snapshot(items, categories)),
     timeoutMs: 60000,
@@ -204,10 +235,22 @@ export async function pushItems(server, items, base, categories) {
   };
 }
 
+// "41:<id>, 42:<id>" → Map { <id> → 41, <id> → 42 }.
+const writesOf = (header) =>
+  new Map(
+    String(header || "")
+      .split(",")
+      .map((entry) => entry.trim().split(":"))
+      .filter(([version, id]) => id && /^\d+$/.test(version))
+      .map(([version, id]) => [id, Number(version)])
+  );
+
 // The server's copy: { version (0 when it has none), items, categories,
-// schemaVersion, savedAt }. The body is the snapshot; the version comes in the
-// ETag. With `known`, returns null if that's still the version it holds, which
-// costs next to nothing and so can be asked often.
+// schemaVersion, savedAt, writes }. The body is the snapshot; the version comes
+// in the ETag, and `writes`, the version each recent write made by the id it
+// came with, in X-Writes (empty from a server too old to keep them). With
+// `known`, returns null if that's still the version it holds, which costs next
+// to nothing and so can be asked often.
 export async function fetchServerCopy(server, known) {
   const res = await call(server, "/state", {
     timeoutMs: 60000,
@@ -228,6 +271,7 @@ export async function fetchServerCopy(server, known) {
     schemaVersion: Number.isFinite(doc.schemaVersion) ? doc.schemaVersion : 1,
     savedAt:
       typeof doc.savedAt === "string" ? doc.savedAt : res.headers.get("X-Updated") || null,
+    writes: writesOf(res.headers.get("X-Writes")),
   };
 }
 

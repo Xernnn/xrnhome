@@ -37,12 +37,15 @@ import {
   itemsHash,
   loadSyncBase,
   loadSyncMeta,
+  loadSyncSent,
   pushItems,
   saveSyncMeta,
+  saveSyncSent,
   saveSyncState,
   withLocalPhotos,
 } from "../utils/sync";
 import {
+  generateId,
   mergeCategories,
   mergeCopies,
   prepareItems,
@@ -149,6 +152,8 @@ export function SyncProvider({ children }) {
   metaRef.current = meta;
   // The server copy `meta.version` names: { items, categories }, or null.
   const baseRef = useRef(null);
+  // What went with write `meta.sentId`: { id, items, categories }, or null.
+  const sentRef = useRef(null);
   const statusRef = useRef(status);
   statusRef.current = status;
   const timer = useRef(null);
@@ -164,13 +169,15 @@ export function SyncProvider({ children }) {
   useEffect(() => {
     let mounted = true;
     (async () => {
-      const [saved, savedMeta, savedBase] = await Promise.all([
+      const [saved, savedMeta, savedBase, savedSent] = await Promise.all([
         loadServer(),
         loadSyncMeta(),
         loadSyncBase(),
+        loadSyncSent(),
       ]);
       if (!mounted) return;
       baseRef.current = savedBase;
+      sentRef.current = savedSent;
       setServer(saved);
       setMeta(savedMeta);
       setStatus({ state: saved ? "idle" : "off" });
@@ -195,16 +202,19 @@ export function SyncProvider({ children }) {
     await saveSyncState(next, base);
   }, []);
 
-  // Sends `list`, noting first what's on its way. The server can take a write and
-  // its answer still never get here: the connection drops, or the app is put away.
-  // The note is how takeServerCopy knows that write when it comes back down, and
-  // it goes with the next sync that works (storeSynced).
+  // Sends `list`, noting first what's on its way: the list, its hash, and the id
+  // the write goes with. The server can take a write and its answer still never
+  // get here: the connection drops, or the app is put away. The note is how
+  // takeServerCopy knows that write when it comes back down, and it goes with the
+  // next sync that works (storeSynced).
   const send = useCallback(async (target, list, base, own) => {
-    const sending = { ...metaRef.current, sent: itemsHash(list, own) };
+    const id = generateId();
+    const sending = { ...metaRef.current, sent: itemsHash(list, own), sentId: id };
     metaRef.current = sending;
+    sentRef.current = { id, items: list, categories: own };
     setMeta(sending);
-    await saveSyncMeta(sending);
-    return pushItems(target, list, base, own);
+    await saveSyncSent(sending, sentRef.current);
+    return pushItems(target, list, base, own, id);
   }, []);
 
   // The server has a copy this device's items aren't built on: say what it holds.
@@ -271,7 +281,7 @@ export function SyncProvider({ children }) {
       setStatus((prev) => ({ ...prev, state: "syncing" }));
       const { items: withPhotos } = await withLocalPhotos(target, copy.items);
       const migrate = copy.schemaVersion < CURRENT_SCHEMA_VERSION;
-      const base = baseRef.current;
+      let base = baseRef.current;
       const mineCategories = categoryList(categoriesRef.current);
       const theirCategories = copy.categories
         ? categoryList(copy.categories)
@@ -279,8 +289,25 @@ export function SyncProvider({ children }) {
       // This device's own write, whose answer never got here (see `send`). It's
       // what this device stands on now, not another device's changes: merged as
       // those, the stock it added or used would be counted again on top of
-      // whatever has been done to the same items here since.
-      if (known.sent) {
+      // whatever has been done to the same items here since. The server names
+      // the version each write made by the id it came with, so the write is known
+      // even under another device's on top of it, whose changes are then the ones
+      // to merge. A server too old for that leaves the hash, which knows the write
+      // only while it's the copy there.
+      const own = sentRef.current;
+      const ownAt =
+        known.sentId && own?.id === known.sentId ? copy.writes?.get(own.id) : undefined;
+      if (ownAt !== undefined) {
+        const sent = { items: own.items, categories: own.categories };
+        if (ownAt === copy.version) {
+          await storeSynced(
+            { version: ownAt, syncedAt: new Date().toISOString(), hash: known.sent },
+            sent
+          );
+          return true;
+        }
+        base = sent;
+      } else if (known.sent) {
         const sent = prepareItems(withPhotos, migrate);
         if (itemsHash(sent, theirCategories) === known.sent) {
           await storeSynced(
