@@ -152,12 +152,20 @@ def check_login(header):
     import bcrypt  # only needed once someone logs in
 
     try:
+        checked, spare = False, None
         with open(args.users, encoding="utf-8") as f:
             for line in f:
                 name, _, hashed = line.strip().partition(":")
-                if name == user and hashed and bcrypt.checkpw(password.encode(), hashed.encode()):
-                    auth_cache[key] = (user, time.time() + AUTH_CACHE_S, mtime)
-                    return user
+                spare = hashed or spare
+                if name == user and hashed:
+                    checked = True
+                    if bcrypt.checkpw(password.encode(), hashed.encode()):
+                        auth_cache[key] = (user, time.time() + AUTH_CACHE_S, mtime)
+                        return user
+        if not checked and spare:
+            # A name that isn't there takes as long as a wrong password for one that is, or
+            # the time an answer takes says which names exist. The result is never used.
+            bcrypt.checkpw(password.encode(), spare.encode())
     except (OSError, ValueError):
         pass
     return None
@@ -181,6 +189,30 @@ def client_address(handler):
     if ip.ipv4_mapped:
         return str(ip.ipv4_mapped)
     return f"{ipaddress.IPv6Address(int(ip) >> 64 << 64)}/64"
+
+
+def from_another_site(headers):
+    """Whether a request came from another site's page. A browser that was once given the password
+    in its own sign-in box sends it again with a form any site posts here, and a text/plain form
+    body can be JSON. The browser says where the page was in Sec-Fetch-Site; one too old for that
+    still sends Origin with a POST, held against this host's name (or the proxy's X-Forwarded-Host).
+    The apps send neither, and the laptop version is this host's own page."""
+    origin = (headers.get("Origin") or "").strip().lower()
+    if origin.startswith(("chrome-extension://", "moz-extension://")):
+        return False
+    site = (headers.get("Sec-Fetch-Site") or "").strip().lower()
+    if site:
+        return site in ("cross-site", "same-site")
+    scheme, _, host = origin.partition("://")
+    if scheme not in ("http", "https"):
+        return False  # no Origin, or "null"
+    ours = [headers.get("Host") or "", *(headers.get("X-Forwarded-Host") or "").split(",")]
+    return host_key(host) not in {host_key(h) for h in ours if h.strip()}
+
+
+def host_key(host):
+    """A host as Origin and Host both write it: lower case, without the default port."""
+    return host.strip().lower().removesuffix(":443").removesuffix(":80")
 
 
 def locked_out(addr, header=None):
@@ -298,13 +330,30 @@ def etag_version(header):
     return (header or "").strip().removeprefix("W/").strip('"')
 
 
+# The request line and X-Forwarded-For come from the caller. Written to the log as they are, a
+# control character in them could rewrite the terminal the log is read in, or (a \r) start a line
+# of its own for xrnhub's log reader. Escaped as http.server's own log_message, replaced here, does.
+LOG_ESCAPES = str.maketrans({**{c: f"\\x{c:02x}" for c in (*range(0x20), *range(0x7F, 0xA0))}, "\\": "\\\\"})
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "xrnhome-sync/1"
+    sys_version = ""  # the Server header named the Python version too
     timeout = 120  # seconds of silence before a connection is dropped, so a stalled client can't hold a thread
 
     def log_message(self, fmt, *a):
-        who = self.headers.get("X-Forwarded-For", self.client_address[0]) if self.headers else "-"
-        sys.stderr.write(f"{who} {fmt % a}\n")
+        headers = getattr(self, "headers", None)  # none yet on a request line that didn't parse
+        who = headers.get("X-Forwarded-For", self.client_address[0]) if headers else "-"
+        sys.stderr.write(f"{who} {fmt % a}".translate(LOG_ESCAPES) + "\n")
+
+    def parse_request(self):
+        if not super().parse_request():
+            return False
+        # Before the login, which a page elsewhere can have the browser pass for it.
+        if self.command not in ("GET", "HEAD", "OPTIONS") and from_another_site(self.headers):
+            self.send(403, "refused: sent from another site's page")
+            return False
+        return True
 
     def route(self):
         path = self.path.partition("?")[0]
@@ -361,15 +410,17 @@ class Handler(BaseHTTPRequestHandler):
     def login(self):
         addr = client_address(self)
         if locked_out(addr, self.headers.get("Authorization")):
-            time.sleep(FAIL_DELAY_S)
+            if self.headers.get("Authorization"):
+                time.sleep(FAIL_DELAY_S)
             self.send(429, "too many wrong passwords; try again later",
                       headers={"Retry-After": str(FAIL_WINDOW_S)})
             return None
         user = check_login(self.headers.get("Authorization"))
         if not user:
+            # A request with no password guessed nothing, and needn't hold a thread for it.
             if self.headers.get("Authorization"):
                 note_failure(addr, self.headers.get("Authorization"))
-            time.sleep(FAIL_DELAY_S)
+                time.sleep(FAIL_DELAY_S)
             self.send(401, "login required", headers={"WWW-Authenticate": 'Basic realm="xrnhome"'})
             return None
         with fail_lock:

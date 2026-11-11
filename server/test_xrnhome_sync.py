@@ -3,13 +3,17 @@
     python3 -m unittest server/test_xrnhome_sync.py     (from the repo root; needs bcrypt)
 """
 import base64
+import http.client
 import importlib.util
+import io
 import json
 import os
+import socket
 import tempfile
 import threading
 import time
 import unittest
+import unittest.mock
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
@@ -153,6 +157,24 @@ class SyncServerTest(unittest.TestCase):
             srv.KEEP_WRITES = keep
         self.assertEqual("3:w2, 4:w3, 5:w4", self.call("GET", "/state")[2]["X-Writes"])
 
+    def test_a_page_on_another_site_cant_write_with_the_browsers_password(self):
+        # The laptop version signs in with the browser's own box, so the browser keeps the
+        # password and sends it with whatever another site's page sends here.
+        for elsewhere in ({"Sec-Fetch-Site": "cross-site", "Origin": "https://evil.example"},
+                          {"Sec-Fetch-Site": "same-site", "Origin": "https://other.homeserver.example"},
+                          {"Origin": "https://evil.example"}):  # a browser from before Sec-Fetch-Site
+            self.assertEqual(403, self.call("PUT", "/state", snapshot("Junk"), {"If-Match": "*", **elsewhere})[0])
+            self.assertEqual(403, self.call("PUT", "/photos/junk.jpg", b"x", elsewhere, raw=True)[0])
+        self.assertEqual((b"{}", []), (self.call("GET", "/state")[1], json.loads(self.call("GET", "/photos")[1])))
+        # Reads, the laptop version (behind the proxy too) and the phone still do.
+        self.assertEqual(200, self.call("GET", "/state", headers={"Sec-Fetch-Site": "cross-site"})[0])
+        port = self.httpd.server_address[1]
+        for ours in ({"Sec-Fetch-Site": "same-origin", "Origin": "https://homeserver.example"},
+                     {"Origin": f"http://127.0.0.1:{port}"},
+                     {"Origin": "https://HomeServer.example", "X-Forwarded-Host": "homeserver.example:443"},
+                     {}):
+            self.assertEqual(200, self.call("PUT", "/state", snapshot("Milk"), {"If-Match": "*", **ours})[0], ours)
+
     def test_unchanged_answers_304(self):
         self.call("PUT", "/state", snapshot("Milk"), {"If-Match": '"0"'})
         status, body, _ = self.call("GET", "/state", headers={"If-None-Match": '"1"'})
@@ -178,6 +200,38 @@ class SyncServerTest(unittest.TestCase):
             self.assertIn(self.call("PUT", f"/photos/{name}", b"x", raw=True)[0], (400, 404), name)
         self.assertEqual(404, self.call("GET", "/photos/..%2F..%2Fusers")[0])
 
+    def test_an_unparseable_request_gets_an_answer(self):
+        with socket.create_connection(("127.0.0.1", self.httpd.server_address[1]), timeout=10) as s:
+            s.sendall(b"GARBAGE\r\n\r\n")
+            self.assertIn(b"400", s.recv(200))
+
+    def test_the_log_shows_a_callers_control_characters_escaped(self):
+        # The request line and X-Forwarded-For are the caller's. Written raw, an escape sequence
+        # rewrote the terminal, and a \r started a line of its own where xrnhub reads the log.
+        forged = b'2026-11-06_01:09:14.23919 198.51.100.66 "POST /api/changes HTTP/1.1" 200 -'
+        with unittest.mock.patch("sys.stderr", new_callable=io.StringIO) as log:
+            for raw in (b"GET /a\x1b[2Jb HTTP/1.1\r\nX-Forwarded-For: 203.0.113.70\x1b]0;hi\x07\r\n\r\n",
+                        b"GET /a\r" + forged + b" HTTP/1.1\r\n\r\n"):
+                with socket.create_connection(("127.0.0.1", self.httpd.server_address[1]), timeout=10) as s:
+                    s.sendall(raw)
+                    while s.recv(4096):
+                        pass
+        text = log.getvalue()
+        self.assertIn("203.0.113.70\\x1b]0;hi\\x07", text)
+        self.assertIn("/a\\x1b[2Jb", text)
+        self.assertIn("/a\\x0d2026-11-06", text)
+        self.assertEqual([], [c for c in text if c != "\n" and (ord(c) < 0x20 or 0x7F <= ord(c) < 0xA0)])
+
+    def test_no_answer_names_the_python_version(self):
+        # The Server header said "<name>/1 Python/3.x.y" on every answer, error pages included.
+        for method in ("GET", "PATCH"):  # PATCH: http.server's own 501 page
+            conn = http.client.HTTPConnection("127.0.0.1", self.httpd.server_address[1], timeout=10)
+            conn.request(method, "/health")
+            res = conn.getresponse()
+            res.read()
+            conn.close()
+            self.assertNotIn("Python", res.getheader("Server"), method)
+
     def test_everything_but_health_needs_the_login(self):
         self.assertEqual((200, b"ok"), self.call("GET", "/health", password=None)[:2])
         for path in ("/state", "/photos", "/photos/a.jpg", "/update/app.json", "/update/xrnhome-1.apk"):
@@ -200,6 +254,38 @@ class SyncServerTest(unittest.TestCase):
         self.assertEqual(401, self.guess("2001:db8:1:3::1"))  # the /64 next door isn't held
         self.assertEqual(401, self.guess("::ffff:203.0.113.40"))  # an IPv4 caller written as IPv6
         self.assertIn("203.0.113.40", srv.failures)  # ...is counted as that IPv4 address
+
+    def test_a_name_that_isnt_there_costs_a_check_like_one_that_is(self):
+        import bcrypt
+
+        def checks(login):
+            header = "Basic " + base64.b64encode(login.encode()).decode()
+            with unittest.mock.patch.object(bcrypt, "checkpw", wraps=bcrypt.checkpw) as checkpw:
+                self.assertIsNone(srv.check_login(header))
+            return checkpw.call_count
+        self.assertEqual(1, checks("sonn:nope"))
+        self.assertEqual(1, checks("nobody:nope"))  # none: the answer came sooner, and said so
+        self.assertIsNone(srv.check_login("Basic " + base64.b64encode(b"nobody:secret").decode()))
+
+    def test_a_request_with_no_password_isnt_held(self):
+        # The hold after a wrong password slows a guesser down. One that sent no password, as the
+        # browser's first try at the laptop version does, guessed nothing and was held all the same.
+        def timed(addr, password):
+            start = time.monotonic()
+            status = self.call("GET", "/state", password=password, headers={"X-Forwarded-For": addr})[0]
+            return status, time.monotonic() - start
+        srv.failures["203.0.113.61"] = {str(i): time.monotonic() for i in range(srv.FAIL_LIMIT)}  # locked out
+        srv.FAIL_DELAY_S = 0.5
+        try:
+            for addr, status in (("203.0.113.60", 401), ("203.0.113.61", 429)):
+                got, took = timed(addr, None)
+                self.assertEqual(status, got)
+                self.assertLess(took, 0.4, addr)
+                got, took = timed(addr, "nope")
+                self.assertEqual(status, got)
+                self.assertGreaterEqual(took, 0.5, addr)
+        finally:
+            srv.FAIL_DELAY_S = 0
 
     def test_wrong_passwords_lock_the_address_out(self):
         srv.FAIL_LIMIT = 3
