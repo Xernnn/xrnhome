@@ -59,9 +59,10 @@ const ITEMS_KEY = "xrnhome_items";
 
 // The parts of server/xrnhome-sync.py the app talks to. `refuse` answers every
 // request with that status instead; with `dropAnswer` a write is taken and the
-// connection then fails before the answer.
+// connection then fails before the answer; `delay` makes every answer take that
+// many milliseconds, as a real connection does.
 const makeServer = () => {
-  const s = { version: 0, doc: {}, puts: 0, refuse: 0, dropAnswer: false };
+  const s = { version: 0, doc: {}, puts: 0, refuse: 0, dropAnswer: false, delay: 0 };
   const reply = (status, json, headers = {}) => ({
     status,
     ok: status >= 200 && status < 300,
@@ -70,6 +71,9 @@ const makeServer = () => {
   });
   s.fetch = jest.fn(async (url, { method = "GET", headers = {}, body } = {}) => {
     const path = url.slice(URL.length);
+    if (s.delay) {
+      await new Promise((resolve) => setTimeout(resolve, s.delay));
+    }
     if (s.refuse) {
       return reply(s.refuse);
     }
@@ -387,6 +391,41 @@ describe("a write the server took but whose answer never arrived", () => {
     await wait(31000);
     expect(app.inventory.items[0].id).toBe(id);
     expect(server.doc.items).toHaveLength(1);
+  });
+});
+
+describe("a server that was put back to an older copy", () => {
+  it("is merged with once the person says to keep both", async () => {
+    await launch();
+    await add("Milk");
+    await wait(16000);
+    await add("Bread");
+    await wait(16000);
+    expect(server.version).toBe(2);
+
+    // The server starts again from a copy that only has Eggs, under an older number.
+    server.doc = {
+      ...server.doc,
+      items: [{ ...server.doc.items[0], id: "eggs", name: "Eggs" }],
+    };
+    server.version = 1;
+    await wait(31000);
+    expect(app.sync.status).toMatchObject({ state: "conflict", reason: "other", serverCount: 1 });
+
+    // The answer comes after the screen has drawn again, as it does on a phone.
+    server.delay = 200;
+    let keeping;
+    await act(async () => {
+      keeping = app.sync.keepBoth();
+    });
+    await wait(2000);
+    await act(async () => {
+      await keeping;
+    });
+    const names = (list) => list.map((item) => item.name).sort();
+    expect(app.sync.status.state).toBe("idle");
+    expect(names(app.inventory.items)).toEqual(["Bread", "Eggs", "Milk"]);
+    expect(names(server.doc.items)).toEqual(["Bread", "Eggs", "Milk"]);
   });
 });
 

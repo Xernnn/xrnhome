@@ -681,7 +681,11 @@ export function SyncProvider({ children }) {
   // server's copy (a phone connecting with items of its own, say). With no base,
   // nothing can be read as deleted, so nothing goes.
   const keepBoth = useCallback(async () => {
-    metaRef.current = { ...metaRef.current, version: null, hash: null };
+    // In the state as well as the ref: the next render puts the ref back to
+    // whatever the state holds, and the server's answer comes after that render.
+    const fresh = { ...metaRef.current, version: null, hash: null };
+    metaRef.current = fresh;
+    setMeta(fresh);
     baseRef.current = null;
     setStatus({ state: "idle" });
     statusRef.current = { state: "idle" };
