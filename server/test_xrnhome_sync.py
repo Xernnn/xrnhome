@@ -3,6 +3,7 @@
     python3 -m unittest server/test_xrnhome_sync.py     (from the repo root; needs bcrypt)
 """
 import base64
+import http.client
 import importlib.util
 import io
 import json
@@ -190,6 +191,16 @@ class SyncServerTest(unittest.TestCase):
         self.assertIn("/a\\x1b[2Jb", text)
         self.assertIn("/a\\x0d2026-11-06", text)
         self.assertEqual([], [c for c in text if c != "\n" and (ord(c) < 0x20 or 0x7F <= ord(c) < 0xA0)])
+
+    def test_no_answer_names_the_python_version(self):
+        # The Server header said "<name>/1 Python/3.x.y" on every answer, error pages included.
+        for method in ("GET", "PATCH"):  # PATCH: http.server's own 501 page
+            conn = http.client.HTTPConnection("127.0.0.1", self.httpd.server_address[1], timeout=10)
+            conn.request(method, "/health")
+            res = conn.getresponse()
+            res.read()
+            conn.close()
+            self.assertNotIn("Python", res.getheader("Server"), method)
 
     def test_everything_but_health_needs_the_login(self):
         self.assertEqual((200, b"ok"), self.call("GET", "/health", password=None)[:2])
