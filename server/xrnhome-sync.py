@@ -173,6 +173,30 @@ def client_address(handler):
     return f"{ipaddress.IPv6Address(int(ip) >> 64 << 64)}/64"
 
 
+def from_another_site(headers):
+    """Whether a request came from another site's page. A browser that was once given the password
+    in its own sign-in box sends it again with a form any site posts here, and a text/plain form
+    body can be JSON. The browser says where the page was in Sec-Fetch-Site; one too old for that
+    still sends Origin with a POST, held against this host's name (or the proxy's X-Forwarded-Host).
+    The apps send neither, and the laptop version is this host's own page."""
+    origin = (headers.get("Origin") or "").strip().lower()
+    if origin.startswith(("chrome-extension://", "moz-extension://")):
+        return False
+    site = (headers.get("Sec-Fetch-Site") or "").strip().lower()
+    if site:
+        return site in ("cross-site", "same-site")
+    scheme, _, host = origin.partition("://")
+    if scheme not in ("http", "https"):
+        return False  # no Origin, or "null"
+    ours = [headers.get("Host") or "", *(headers.get("X-Forwarded-Host") or "").split(",")]
+    return host_key(host) not in {host_key(h) for h in ours if h.strip()}
+
+
+def host_key(host):
+    """A host as Origin and Host both write it: lower case, without the default port."""
+    return host.strip().lower().removesuffix(":443").removesuffix(":80")
+
+
 def locked_out(addr, header=None):
     """Whether the address has used up its wrong logins. A try that isn't turned away takes its
     place in the count here, before its login is checked. Counted only once it had failed, a burst
@@ -295,6 +319,15 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *a):
         who = self.headers.get("X-Forwarded-For", self.client_address[0]) if self.headers else "-"
         sys.stderr.write(f"{who} {fmt % a}\n")
+
+    def parse_request(self):
+        if not super().parse_request():
+            return False
+        # Before the login, which a page elsewhere can have the browser pass for it.
+        if self.command not in ("GET", "HEAD", "OPTIONS") and from_another_site(self.headers):
+            self.send(403, "refused: sent from another site's page")
+            return False
+        return True
 
     def route(self):
         path = self.path.partition("?")[0]

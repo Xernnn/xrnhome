@@ -123,6 +123,24 @@ class SyncServerTest(unittest.TestCase):
         status, _, headers = self.call("PUT", "/state", snapshot("Eggs"), {"If-Match": "*"})
         self.assertEqual((200, '"2"'), (status, headers["ETag"]))
 
+    def test_a_page_on_another_site_cant_write_with_the_browsers_password(self):
+        # The laptop version signs in with the browser's own box, so the browser keeps the
+        # password and sends it with whatever another site's page sends here.
+        for elsewhere in ({"Sec-Fetch-Site": "cross-site", "Origin": "https://evil.example"},
+                          {"Sec-Fetch-Site": "same-site", "Origin": "https://other.homeserver.example"},
+                          {"Origin": "https://evil.example"}):  # a browser from before Sec-Fetch-Site
+            self.assertEqual(403, self.call("PUT", "/state", snapshot("Junk"), {"If-Match": "*", **elsewhere})[0])
+            self.assertEqual(403, self.call("PUT", "/photos/junk.jpg", b"x", elsewhere, raw=True)[0])
+        self.assertEqual((b"{}", []), (self.call("GET", "/state")[1], json.loads(self.call("GET", "/photos")[1])))
+        # Reads, the laptop version (behind the proxy too) and the phone still do.
+        self.assertEqual(200, self.call("GET", "/state", headers={"Sec-Fetch-Site": "cross-site"})[0])
+        port = self.httpd.server_address[1]
+        for ours in ({"Sec-Fetch-Site": "same-origin", "Origin": "https://homeserver.example"},
+                     {"Origin": f"http://127.0.0.1:{port}"},
+                     {"Origin": "https://HomeServer.example", "X-Forwarded-Host": "homeserver.example:443"},
+                     {}):
+            self.assertEqual(200, self.call("PUT", "/state", snapshot("Milk"), {"If-Match": "*", **ours})[0], ours)
+
     def test_unchanged_answers_304(self):
         self.call("PUT", "/state", snapshot("Milk"), {"If-Match": '"0"'})
         status, body, _ = self.call("GET", "/state", headers={"If-None-Match": '"1"'})
