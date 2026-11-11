@@ -60,9 +60,20 @@ const ITEMS_KEY = "xrnhome_items";
 // The parts of server/xrnhome-sync.py the app talks to. `refuse` answers every
 // request with that status instead; with `dropAnswer` a write is taken and the
 // connection then fails before the answer; `delay` makes every answer take that
-// many milliseconds, as a real connection does.
+// many milliseconds, as a real connection does. `writes` are the ids writes
+// came with, as X-Writes names them; with `keepsIds` off it's a server from
+// before those, which ignores them.
 const makeServer = () => {
-  const s = { version: 0, doc: {}, puts: 0, refuse: 0, dropAnswer: false, delay: 0 };
+  const s = {
+    version: 0,
+    doc: {},
+    puts: 0,
+    refuse: 0,
+    dropAnswer: false,
+    delay: 0,
+    keepsIds: true,
+    writes: [],
+  };
   const reply = (status, json, headers = {}) => ({
     status,
     ok: status >= 200 && status < 300,
@@ -84,7 +95,7 @@ const makeServer = () => {
     if (path === "/state" && method === "GET") {
       return headers["If-None-Match"] === `"${s.version}"`
         ? reply(304, null, etag)
-        : reply(200, s.doc, etag);
+        : reply(200, s.doc, s.writes.length ? { ...etag, "X-Writes": s.writes.join(", ") } : etag);
     }
     if (path === "/state" && method === "PUT") {
       const want = headers["If-Match"];
@@ -94,6 +105,9 @@ const makeServer = () => {
       s.puts += 1;
       s.version += 1;
       s.doc = JSON.parse(body);
+      if (s.keepsIds && headers["X-Write-Id"]) {
+        s.writes.push(`${s.version}:${headers["X-Write-Id"]}`);
+      }
       if (s.dropAnswer) {
         throw new TypeError("Network request failed");
       }
@@ -135,8 +149,11 @@ const launch = async () => {
   });
   await wait(0);
 };
+// Closed as the system closes an app: a timer it had set (a change waiting to go
+// up) doesn't go off later on top of the next launch.
 const quit = async () => {
   await act(async () => renderer.unmount());
+  jest.clearAllTimers();
   renderer = null;
 };
 const add = (name) =>
@@ -379,18 +396,100 @@ describe("a write the server took but whose answer never arrived", () => {
     expect(server.doc.items[0].quantity).toBe(1);
   });
 
-  it("is still merged with what the other device did on top of it", async () => {
-    const id = await buyThreeUnanswered();
-    // The laptop took the four and used two of them before this phone got through.
+  // The laptop takes the four and uses two of them before this phone gets through.
+  const laptopUsesTwo = () => {
     const updatedAt = new Date(Date.now() + 1000).toISOString();
     server.doc = {
       ...server.doc,
       items: server.doc.items.map((item) => ({ ...item, quantity: 2, updatedAt })),
     };
     server.version += 1;
+    server.writes.push(`${server.version}:laptop-${server.version}`);
+  };
+
+  it("is still merged with what the other device did on top of it", async () => {
+    const id = await buyThreeUnanswered();
+    laptopUsesTwo();
     await wait(31000);
     expect(app.inventory.items[0].id).toBe(id);
     expect(server.doc.items).toHaveLength(1);
+  });
+
+  it("is known under the other device's write on top, so its stock counts once", async () => {
+    const id = await buyThreeUnanswered();
+    laptopUsesTwo();
+    // And one is used here: 1 + 3 - 2 - 1.
+    await act(async () => app.inventory.stepItem(id, -1));
+    await wait(31000);
+    expect(app.inventory.items[0].quantity).toBe(1);
+    expect(server.doc.items[0].quantity).toBe(1);
+    expect(app.sync.status.state).toBe("idle");
+  });
+
+  it("is known under the other device's write after the app was closed, too", async () => {
+    const id = await buyThreeUnanswered();
+    await quit();
+    laptopUsesTwo();
+    await launch();
+    await act(async () => app.inventory.stepItem(id, -1));
+    await wait(31000);
+    expect(app.inventory.items[0].quantity).toBe(1);
+    expect(server.doc.items[0].quantity).toBe(1);
+  });
+
+  it("is still known by what it held on a server too old to keep write ids", async () => {
+    server.keepsIds = false;
+    const id = await buyThreeUnanswered();
+    await act(async () => app.inventory.stepItem(id, -1));
+    await wait(31000);
+    expect(server.writes).toEqual([]);
+    expect(app.inventory.items[0].quantity).toBe(3);
+    expect(server.doc.items[0].quantity).toBe(3);
+  });
+});
+
+describe("a merge the app died in the middle of", () => {
+  it("is made once on the next launch, not again on top of itself", async () => {
+    await launch();
+    await add("Milk");
+    await wait(16000);
+    const { id } = app.inventory.items[0];
+    // The laptop buys two, and one is bought here before that comes down: 1 + 2 + 1.
+    const updatedAt = new Date(Date.now() + 1000).toISOString();
+    server.doc = {
+      ...server.doc,
+      items: server.doc.items.map((item) => ({ ...item, quantity: 3, updatedAt })),
+    };
+    server.version += 1;
+    await act(async () => app.inventory.buyItem(id, 1));
+
+    // The app dies as the merge's new base is being saved: the next launch has
+    // what was saved before that, and nothing after it reaches the server.
+    const store = AsyncStorage.__INTERNAL_MOCK_STORAGE__;
+    const save = AsyncStorage.multiSet.getMockImplementation();
+    let disk = null;
+    AsyncStorage.multiSet.mockImplementation((pairs, ...rest) => {
+      if (!disk && pairs.some(([key]) => key === "xrnhome_sync_base")) {
+        disk = { ...store };
+        server.refuse = 503;
+      }
+      return save(pairs, ...rest);
+    });
+    try {
+      await wait(16000);
+    } finally {
+      AsyncStorage.multiSet.mockImplementation(save);
+    }
+    expect(disk).not.toBeNull();
+    await quit();
+    Object.keys(store).forEach((key) => delete store[key]);
+    Object.assign(store, disk);
+    server.refuse = 0;
+
+    await launch();
+    await wait(16000);
+    expect(app.inventory.items[0].quantity).toBe(4);
+    expect(server.doc.items[0].quantity).toBe(4);
   });
 });
 

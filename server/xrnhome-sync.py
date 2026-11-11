@@ -13,10 +13,13 @@ which may or may not strip that prefix.
 Standard library only, plus `bcrypt` to read an htpasswd file, so the calendar password is the
 sync password.
 
-    GET  /state               200, the document; ETag: "<version>" (0 while there is none)
+    GET  /state               200, the document; ETag: "<version>" (0 while there is none);
+                              X-Writes: "<version>:<id>, ..." for the last KEEP_WRITES writes
+                              that came with an id, oldest first
                               If-None-Match: "<version>" -> 304 when unchanged
     PUT  /state               needs If-Match: "<version>" (or "*"); 200 with the new ETag, or
-                              412 if the copy here isn't the one the device last saw
+                              412 if the copy here isn't the one the device last saw.
+                              X-Write-Id: an id the device picked for this write (optional)
     GET  /photos              the names of the photos kept here, as a JSON list
     PUT  /photos/<name>       a photo's bytes
     GET  /photos/<name>       a photo
@@ -32,6 +35,11 @@ Every write keeps the copy it replaces: the last KEEP_VERSIONS of them in histor
 first of each day in daily/ for KEEP_DAYS. A photo goes once none of those name it any more, and
 it has been here for KEEP_DAYS: the laptop sends a photo as it's picked and the item after, so a
 photo nothing names yet may be one whose item is still waiting on a laptop that was shut.
+
+A write's id stays with the copies after it. The server can take a write and its answer still
+never reach the device; when the device next fetches, the id tells it which version was its own
+write, even once another device has written on top, so it merges against what it sent and doesn't
+count what it changed a second time.
 
     python3 xrnhome-sync.py --data ~/xrnhome-sync/data --users ~/.config/xrn-sync/users
 """
@@ -57,6 +65,7 @@ FAIL_LIMIT = 10  # different wrong logins from one address within FAIL_WINDOW_S,
 FAIL_WINDOW_S = 15 * 60
 KEEP_VERSIONS = 20
 KEEP_DAYS = 60
+KEEP_WRITES = 100  # write ids handed back with the state (see X-Writes)
 PRUNE_EVERY_S = 600  # photos are swept at most this often per user
 PHOTO_GRACE_S = KEEP_DAYS * 86400  # a photo this new stays even if nothing names it yet
 PREFIX = "/xrnhome"
@@ -72,6 +81,7 @@ PHOTO_TYPES = {
     ".heif": "image/heif",
     ".gif": "image/gif",
 }
+WRITE_ID = re.compile(r"[A-Za-z0-9._-]{1,64}")
 UPDATE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\.(?:json|apk)")
 UPDATE_TYPES = {
     ".json": "application/json; charset=utf-8",
@@ -142,12 +152,20 @@ def check_login(header):
     import bcrypt  # only needed once someone logs in
 
     try:
+        checked, spare = False, None
         with open(args.users, encoding="utf-8") as f:
             for line in f:
                 name, _, hashed = line.strip().partition(":")
-                if name == user and hashed and bcrypt.checkpw(password.encode(), hashed.encode()):
-                    auth_cache[key] = (user, time.time() + AUTH_CACHE_S, mtime)
-                    return user
+                spare = hashed or spare
+                if name == user and hashed:
+                    checked = True
+                    if bcrypt.checkpw(password.encode(), hashed.encode()):
+                        auth_cache[key] = (user, time.time() + AUTH_CACHE_S, mtime)
+                        return user
+        if not checked and spare:
+            # A name that isn't there takes as long as a wrong password for one that is, or
+            # the time an answer takes says which names exist. The result is never used.
+            bcrypt.checkpw(password.encode(), spare.encode())
     except (OSError, ValueError):
         pass
     return None
@@ -171,6 +189,30 @@ def client_address(handler):
     if ip.ipv4_mapped:
         return str(ip.ipv4_mapped)
     return f"{ipaddress.IPv6Address(int(ip) >> 64 << 64)}/64"
+
+
+def from_another_site(headers):
+    """Whether a request came from another site's page. A browser that was once given the password
+    in its own sign-in box sends it again with a form any site posts here, and a text/plain form
+    body can be JSON. The browser says where the page was in Sec-Fetch-Site; one too old for that
+    still sends Origin with a POST, held against this host's name (or the proxy's X-Forwarded-Host).
+    The apps send neither, and the laptop version is this host's own page."""
+    origin = (headers.get("Origin") or "").strip().lower()
+    if origin.startswith(("chrome-extension://", "moz-extension://")):
+        return False
+    site = (headers.get("Sec-Fetch-Site") or "").strip().lower()
+    if site:
+        return site in ("cross-site", "same-site")
+    scheme, _, host = origin.partition("://")
+    if scheme not in ("http", "https"):
+        return False  # no Origin, or "null"
+    ours = [headers.get("Host") or "", *(headers.get("X-Forwarded-Host") or "").split(",")]
+    return host_key(host) not in {host_key(h) for h in ours if h.strip()}
+
+
+def host_key(host):
+    """A host as Origin and Host both write it: lower case, without the default port."""
+    return host.strip().lower().removesuffix(":443").removesuffix(":80")
 
 
 def locked_out(addr, header=None):
@@ -288,13 +330,30 @@ def etag_version(header):
     return (header or "").strip().removeprefix("W/").strip('"')
 
 
+# The request line and X-Forwarded-For come from the caller. Written to the log as they are, a
+# control character in them could rewrite the terminal the log is read in, or (a \r) start a line
+# of its own for xrnhub's log reader. Escaped as http.server's own log_message, replaced here, does.
+LOG_ESCAPES = str.maketrans({**{c: f"\\x{c:02x}" for c in (*range(0x20), *range(0x7F, 0xA0))}, "\\": "\\\\"})
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "xrnhome-sync/1"
+    sys_version = ""  # the Server header named the Python version too
     timeout = 120  # seconds of silence before a connection is dropped, so a stalled client can't hold a thread
 
     def log_message(self, fmt, *a):
-        who = self.headers.get("X-Forwarded-For", self.client_address[0]) if self.headers else "-"
-        sys.stderr.write(f"{who} {fmt % a}\n")
+        headers = getattr(self, "headers", None)  # none yet on a request line that didn't parse
+        who = headers.get("X-Forwarded-For", self.client_address[0]) if headers else "-"
+        sys.stderr.write(f"{who} {fmt % a}".translate(LOG_ESCAPES) + "\n")
+
+    def parse_request(self):
+        if not super().parse_request():
+            return False
+        # Before the login, which a page elsewhere can have the browser pass for it.
+        if self.command not in ("GET", "HEAD", "OPTIONS") and from_another_site(self.headers):
+            self.send(403, "refused: sent from another site's page")
+            return False
+        return True
 
     def route(self):
         path = self.path.partition("?")[0]
@@ -351,15 +410,17 @@ class Handler(BaseHTTPRequestHandler):
     def login(self):
         addr = client_address(self)
         if locked_out(addr, self.headers.get("Authorization")):
-            time.sleep(FAIL_DELAY_S)
+            if self.headers.get("Authorization"):
+                time.sleep(FAIL_DELAY_S)
             self.send(429, "too many wrong passwords; try again later",
                       headers={"Retry-After": str(FAIL_WINDOW_S)})
             return None
         user = check_login(self.headers.get("Authorization"))
         if not user:
+            # A request with no password guessed nothing, and needn't hold a thread for it.
             if self.headers.get("Authorization"):
                 note_failure(addr, self.headers.get("Authorization"))
-            time.sleep(FAIL_DELAY_S)
+                time.sleep(FAIL_DELAY_S)
             self.send(401, "login required", headers={"WWW-Authenticate": 'Basic realm="xrnhome"'})
             return None
         with fail_lock:
@@ -400,7 +461,9 @@ class Handler(BaseHTTPRequestHandler):
         if etag_version(self.headers.get("If-None-Match")) == str(doc["version"]):
             return self.send(304, headers=etag)
         body = json.dumps(doc.get("data") or {}, ensure_ascii=False, separators=(",", ":"))
-        self.send(200, body, "application/json; charset=utf-8", {**etag, "X-Updated": doc.get("updated", "")})
+        writes = ", ".join(f"{v}:{i}" for v, i in doc.get("writes") or [])
+        self.send(200, body, "application/json; charset=utf-8",
+                  {**etag, "X-Updated": doc.get("updated", ""), **({"X-Writes": writes} if writes else {})})
 
     def send_web(self, path):
         """A file of the laptop version. The page can change under its one name; the rest are
@@ -434,16 +497,22 @@ class Handler(BaseHTTPRequestHandler):
         want = (self.headers.get("If-Match") or "").strip()
         if not want:
             return self.send(428, "If-Match required")
+        write_id = (self.headers.get("X-Write-Id") or "").strip()
         with lock:
             cur = read_state(user)
             if want != "*" and etag_version(want) != str(cur["version"]):
                 return self.send(412, "changed since you read it", headers={"ETag": f'"{cur["version"]}"'})
             keep_old(user, cur)
             version = cur["version"] + 1
+            # A write from an app too old to send an id leaves the ids before it as they were.
+            writes = list(cur.get("writes") or [])
+            if WRITE_ID.fullmatch(write_id):
+                writes.append([version, write_id])
             write_json(user_dir(user, "state.json"), {
                 "version": version,
                 "updated": datetime.now(timezone.utc).isoformat(),
                 "by": (self.headers.get("X-Device") or "")[:64],
+                "writes": writes[-KEEP_WRITES:],
                 "data": data,
             })
         self.send(200, '{"ok":true}', "application/json", {"ETag": f'"{version}"'})
