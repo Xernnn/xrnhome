@@ -4,6 +4,7 @@
 """
 import base64
 import importlib.util
+import io
 import json
 import os
 import socket
@@ -172,6 +173,23 @@ class SyncServerTest(unittest.TestCase):
         with socket.create_connection(("127.0.0.1", self.httpd.server_address[1]), timeout=10) as s:
             s.sendall(b"GARBAGE\r\n\r\n")
             self.assertIn(b"400", s.recv(200))
+
+    def test_the_log_shows_a_callers_control_characters_escaped(self):
+        # The request line and X-Forwarded-For are the caller's. Written raw, an escape sequence
+        # rewrote the terminal, and a \r started a line of its own where xrnhub reads the log.
+        forged = b'2026-11-06_01:09:14.23919 198.51.100.66 "POST /api/changes HTTP/1.1" 200 -'
+        with unittest.mock.patch("sys.stderr", new_callable=io.StringIO) as log:
+            for raw in (b"GET /a\x1b[2Jb HTTP/1.1\r\nX-Forwarded-For: 203.0.113.70\x1b]0;hi\x07\r\n\r\n",
+                        b"GET /a\r" + forged + b" HTTP/1.1\r\n\r\n"):
+                with socket.create_connection(("127.0.0.1", self.httpd.server_address[1]), timeout=10) as s:
+                    s.sendall(raw)
+                    while s.recv(4096):
+                        pass
+        text = log.getvalue()
+        self.assertIn("203.0.113.70\\x1b]0;hi\\x07", text)
+        self.assertIn("/a\\x1b[2Jb", text)
+        self.assertIn("/a\\x0d2026-11-06", text)
+        self.assertEqual([], [c for c in text if c != "\n" and (ord(c) < 0x20 or 0x7F <= ord(c) < 0xA0)])
 
     def test_everything_but_health_needs_the_login(self):
         self.assertEqual((200, b"ok"), self.call("GET", "/health", password=None)[:2])
