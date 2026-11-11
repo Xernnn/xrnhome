@@ -38,6 +38,7 @@ photo nothing names yet may be one whose item is still waiting on a laptop that 
 import argparse
 import base64
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -153,24 +154,41 @@ def check_login(header):
 
 
 def client_address(handler):
-    """The caller's address. Behind the local proxy (Funnel) that's the first X-Forwarded-For hop;
-    the header is only trusted from a loopback peer, since anyone else could make it up."""
+    """Who a wrong login is counted for. Behind the local proxy (Funnel) that's the last
+    X-Forwarded-For hop, the one the proxy added: anything before it came from the caller, who
+    could make up a new address for every guess. The header is only trusted from a loopback peer,
+    for the same reason. An IPv6 address counts as its /64: a line comes with at least that many,
+    so counted one by one its owner had a new address for every guess and never reached the limit."""
     peer = handler.client_address[0]
     forwarded = handler.headers.get("X-Forwarded-For")
-    if forwarded and peer in ("127.0.0.1", "::1"):
-        return forwarded.split(",")[0].strip()
-    return peer
+    addr = forwarded.split(",")[-1].strip() if forwarded and peer in ("127.0.0.1", "::1") else peer
+    try:
+        ip = ipaddress.ip_address(addr)
+    except ValueError:
+        return addr
+    if ip.version == 4:
+        return addr
+    if ip.ipv4_mapped:
+        return str(ip.ipv4_mapped)
+    return f"{ipaddress.IPv6Address(int(ip) >> 64 << 64)}/64"
 
 
-def locked_out(addr):
+def locked_out(addr, header=None):
+    """Whether the address has used up its wrong logins. A try that isn't turned away takes its
+    place in the count here, before its login is checked. Counted only once it had failed, a burst
+    of guesses sent at the same moment was all still under the limit when it arrived, and every one
+    of them got checked. A right login clears the count, its own place in it included."""
     now = time.monotonic()
     with fail_lock:
         recent = {k: t for k, t in failures.get(addr, {}).items() if now - t < FAIL_WINDOW_S}
+        full = len(recent) >= FAIL_LIMIT
+        if header and not full:
+            recent[hashlib.sha256(header.encode()).hexdigest()] = now
         if recent:
             failures[addr] = recent
         else:
             failures.pop(addr, None)
-        return len(recent) >= FAIL_LIMIT
+        return full
 
 
 def note_failure(addr, header):
@@ -332,7 +350,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def login(self):
         addr = client_address(self)
-        if locked_out(addr):
+        if locked_out(addr, self.headers.get("Authorization")):
             time.sleep(FAIL_DELAY_S)
             self.send(429, "too many wrong passwords; try again later",
                       headers={"Retry-After": str(FAIL_WINDOW_S)})
