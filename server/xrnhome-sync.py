@@ -162,15 +162,22 @@ def client_address(handler):
     return peer
 
 
-def locked_out(addr):
+def locked_out(addr, header=None):
+    """Whether the address has used up its wrong logins. A try that isn't turned away takes its
+    place in the count here, before its login is checked. Counted only once it had failed, a burst
+    of guesses sent at the same moment was all still under the limit when it arrived, and every one
+    of them got checked. A right login clears the count, its own place in it included."""
     now = time.monotonic()
     with fail_lock:
         recent = {k: t for k, t in failures.get(addr, {}).items() if now - t < FAIL_WINDOW_S}
+        full = len(recent) >= FAIL_LIMIT
+        if header and not full:
+            recent[hashlib.sha256(header.encode()).hexdigest()] = now
         if recent:
             failures[addr] = recent
         else:
             failures.pop(addr, None)
-        return len(recent) >= FAIL_LIMIT
+        return full
 
 
 def note_failure(addr, header):
@@ -332,7 +339,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def login(self):
         addr = client_address(self)
-        if locked_out(addr):
+        if locked_out(addr, self.headers.get("Authorization")):
             time.sleep(FAIL_DELAY_S)
             self.send(429, "too many wrong passwords; try again later",
                       headers={"Retry-After": str(FAIL_WINDOW_S)})

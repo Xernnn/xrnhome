@@ -163,6 +163,32 @@ class SyncServerTest(unittest.TestCase):
         finally:
             srv.FAIL_LIMIT = 10
 
+    def test_guesses_sent_all_at_once_are_counted_before_they_are_checked(self):
+        # Checking one takes a while (bcrypt, 0.3s on the phone). Counted only once they had
+        # failed, a burst sent together was all under the limit, and all of it got checked.
+        srv.FAIL_LIMIT = 3
+        real, checked, answers = srv.check_login, [], []
+
+        def slow(header):
+            checked.append(header)
+            time.sleep(0.3)
+            return real(header)
+
+        srv.check_login = slow
+        try:
+            burst = [threading.Thread(target=lambda n=n: answers.append(self.call("GET", "/state", password=f"guess{n}")[0]))
+                     for n in range(12)]
+            for t in burst:
+                t.start()
+            for t in burst:
+                t.join()
+            self.assertEqual(3, len(checked))
+            self.assertEqual([401] * 3 + [429] * 9, sorted(answers))
+            self.assertEqual(429, self.call("GET", "/state")[0])
+        finally:
+            srv.check_login = real
+            srv.FAIL_LIMIT = 10
+
     def test_an_old_password_sent_again_and_again_counts_once(self):
         # A device that still has the login from before the password changed isn't
         # someone guessing, and the address it locks out is everyone's behind Funnel.
