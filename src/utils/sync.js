@@ -43,7 +43,9 @@ const withinTime = (work, ms = PHOTO_TIMEOUT_MS) => {
 };
 
 // { version: the server copy this phone's items match, or null; syncedAt;
-//   hash: of the items that copy holds, so an unchanged list isn't sent again }.
+//   hash: of the items that copy holds, so an unchanged list isn't sent again;
+//   sent: the hash of a list that went to the server with no answer back yet, so
+//   this device knows its own write when it's the copy that comes down next }.
 export async function loadSyncMeta() {
   try {
     const raw = await AsyncStorage.getItem(META_KEY);
@@ -52,9 +54,10 @@ export async function loadSyncMeta() {
       version: Number.isFinite(meta?.version) ? meta.version : null,
       syncedAt: typeof meta?.syncedAt === "string" ? meta.syncedAt : null,
       hash: typeof meta?.hash === "string" ? meta.hash : null,
+      sent: typeof meta?.sent === "string" ? meta.sent : null,
     };
   } catch (error) {
-    return { version: null, syncedAt: null, hash: null };
+    return { version: null, syncedAt: null, hash: null, sent: null };
   }
 }
 

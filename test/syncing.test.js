@@ -58,9 +58,10 @@ const URL = "https://home.test/xrnhome";
 const ITEMS_KEY = "xrnhome_items";
 
 // The parts of server/xrnhome-sync.py the app talks to. `refuse` answers every
-// request with that status instead.
+// request with that status instead; with `dropAnswer` a write is taken and the
+// connection then fails before the answer.
 const makeServer = () => {
-  const s = { version: 0, doc: {}, puts: 0, refuse: 0 };
+  const s = { version: 0, doc: {}, puts: 0, refuse: 0, dropAnswer: false };
   const reply = (status, json, headers = {}) => ({
     status,
     ok: status >= 200 && status < 300,
@@ -89,6 +90,9 @@ const makeServer = () => {
       s.puts += 1;
       s.version += 1;
       s.doc = JSON.parse(body);
+      if (s.dropAnswer) {
+        throw new TypeError("Network request failed");
+      }
       return reply(200, { ok: true }, { ETag: `"${s.version}"` });
     }
     return reply(404);
@@ -322,6 +326,67 @@ describe("leaving the app", () => {
     await wait(0);
     expect(server.puts).toBe(1);
     expect(server.doc.items.map((item) => item.name)).toEqual(["Milk"]);
+  });
+});
+
+describe("a write the server took but whose answer never arrived", () => {
+  // Milk, one of it, on the phone and the server. Three more are bought: the
+  // server takes that, and the connection drops before it can say so.
+  const buyThreeUnanswered = async () => {
+    await launch();
+    await add("Milk");
+    await wait(16000);
+    const { id } = app.inventory.items[0];
+    server.dropAnswer = true;
+    await act(async () => app.inventory.buyItem(id, 3));
+    for (let i = 0; i < 40 && server.puts < 2; i++) await wait(500);
+    expect(server.doc.items[0].quantity).toBe(4);
+    expect(app.sync.status.state).toBe("error");
+    server.dropAnswer = false;
+    return id;
+  };
+
+  it("isn't merged back in as another device's, counting its stock twice", async () => {
+    const id = await buyThreeUnanswered();
+    // One is used before the next sync, which finds this device's own four.
+    await act(async () => app.inventory.stepItem(id, -1));
+    await wait(31000);
+    expect(app.inventory.items[0].quantity).toBe(3);
+    expect(server.doc.items[0].quantity).toBe(3);
+    expect(app.sync.status.state).toBe("idle");
+  });
+
+  it("is still known for this device's own after the app was closed", async () => {
+    const id = await buyThreeUnanswered();
+    await quit();
+    await launch();
+    await act(async () => app.inventory.stepItem(id, -1));
+    await wait(31000);
+    expect(app.inventory.items[0].quantity).toBe(3);
+    expect(server.doc.items[0].quantity).toBe(3);
+  });
+
+  it("doesn't bring back what was undone since", async () => {
+    await buyThreeUnanswered();
+    await act(async () => app.inventory.undoDelete());
+    expect(app.inventory.items[0].quantity).toBe(1);
+    await wait(31000);
+    expect(app.inventory.items[0].quantity).toBe(1);
+    expect(server.doc.items[0].quantity).toBe(1);
+  });
+
+  it("is still merged with what the other device did on top of it", async () => {
+    const id = await buyThreeUnanswered();
+    // The laptop took the four and used two of them before this phone got through.
+    const updatedAt = new Date(Date.now() + 1000).toISOString();
+    server.doc = {
+      ...server.doc,
+      items: server.doc.items.map((item) => ({ ...item, quantity: 2, updatedAt })),
+    };
+    server.version += 1;
+    await wait(31000);
+    expect(app.inventory.items[0].id).toBe(id);
+    expect(server.doc.items).toHaveLength(1);
   });
 });
 
