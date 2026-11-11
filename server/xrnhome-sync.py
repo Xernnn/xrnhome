@@ -13,10 +13,13 @@ which may or may not strip that prefix.
 Standard library only, plus `bcrypt` to read an htpasswd file, so the calendar password is the
 sync password.
 
-    GET  /state               200, the document; ETag: "<version>" (0 while there is none)
+    GET  /state               200, the document; ETag: "<version>" (0 while there is none);
+                              X-Writes: "<version>:<id>, ..." for the last KEEP_WRITES writes
+                              that came with an id, oldest first
                               If-None-Match: "<version>" -> 304 when unchanged
     PUT  /state               needs If-Match: "<version>" (or "*"); 200 with the new ETag, or
-                              412 if the copy here isn't the one the device last saw
+                              412 if the copy here isn't the one the device last saw.
+                              X-Write-Id: an id the device picked for this write (optional)
     GET  /photos              the names of the photos kept here, as a JSON list
     PUT  /photos/<name>       a photo's bytes
     GET  /photos/<name>       a photo
@@ -32,6 +35,11 @@ Every write keeps the copy it replaces: the last KEEP_VERSIONS of them in histor
 first of each day in daily/ for KEEP_DAYS. A photo goes once none of those name it any more, and
 it has been here for KEEP_DAYS: the laptop sends a photo as it's picked and the item after, so a
 photo nothing names yet may be one whose item is still waiting on a laptop that was shut.
+
+A write's id stays with the copies after it. The server can take a write and its answer still
+never reach the device; when the device next fetches, the id tells it which version was its own
+write, even once another device has written on top, so it merges against what it sent and doesn't
+count what it changed a second time.
 
     python3 xrnhome-sync.py --data ~/xrnhome-sync/data --users ~/.config/xrn-sync/users
 """
@@ -57,6 +65,7 @@ FAIL_LIMIT = 10  # different wrong logins from one address within FAIL_WINDOW_S,
 FAIL_WINDOW_S = 15 * 60
 KEEP_VERSIONS = 20
 KEEP_DAYS = 60
+KEEP_WRITES = 100  # write ids handed back with the state (see X-Writes)
 PRUNE_EVERY_S = 600  # photos are swept at most this often per user
 PHOTO_GRACE_S = KEEP_DAYS * 86400  # a photo this new stays even if nothing names it yet
 PREFIX = "/xrnhome"
@@ -72,6 +81,7 @@ PHOTO_TYPES = {
     ".heif": "image/heif",
     ".gif": "image/gif",
 }
+WRITE_ID = re.compile(r"[A-Za-z0-9._-]{1,64}")
 UPDATE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\.(?:json|apk)")
 UPDATE_TYPES = {
     ".json": "application/json; charset=utf-8",
@@ -400,7 +410,9 @@ class Handler(BaseHTTPRequestHandler):
         if etag_version(self.headers.get("If-None-Match")) == str(doc["version"]):
             return self.send(304, headers=etag)
         body = json.dumps(doc.get("data") or {}, ensure_ascii=False, separators=(",", ":"))
-        self.send(200, body, "application/json; charset=utf-8", {**etag, "X-Updated": doc.get("updated", "")})
+        writes = ", ".join(f"{v}:{i}" for v, i in doc.get("writes") or [])
+        self.send(200, body, "application/json; charset=utf-8",
+                  {**etag, "X-Updated": doc.get("updated", ""), **({"X-Writes": writes} if writes else {})})
 
     def send_web(self, path):
         """A file of the laptop version. The page can change under its one name; the rest are
@@ -434,16 +446,22 @@ class Handler(BaseHTTPRequestHandler):
         want = (self.headers.get("If-Match") or "").strip()
         if not want:
             return self.send(428, "If-Match required")
+        write_id = (self.headers.get("X-Write-Id") or "").strip()
         with lock:
             cur = read_state(user)
             if want != "*" and etag_version(want) != str(cur["version"]):
                 return self.send(412, "changed since you read it", headers={"ETag": f'"{cur["version"]}"'})
             keep_old(user, cur)
             version = cur["version"] + 1
+            # A write from an app too old to send an id leaves the ids before it as they were.
+            writes = list(cur.get("writes") or [])
+            if WRITE_ID.fullmatch(write_id):
+                writes.append([version, write_id])
             write_json(user_dir(user, "state.json"), {
                 "version": version,
                 "updated": datetime.now(timezone.utc).isoformat(),
                 "by": (self.headers.get("X-Device") or "")[:64],
+                "writes": writes[-KEEP_WRITES:],
                 "data": data,
             })
         self.send(200, '{"ok":true}', "application/json", {"ETag": f'"{version}"'})

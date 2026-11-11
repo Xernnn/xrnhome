@@ -123,6 +123,36 @@ class SyncServerTest(unittest.TestCase):
         status, _, headers = self.call("PUT", "/state", snapshot("Eggs"), {"If-Match": "*"})
         self.assertEqual((200, '"2"'), (status, headers["ETag"]))
 
+    def test_a_write_is_known_by_its_id_under_the_writes_after_it(self):
+        # A device whose answer never arrived finds its write by this, even once another device
+        # has written on top of it.
+        self.assertIsNone(self.call("GET", "/state")[2]["X-Writes"])
+        self.call("PUT", "/state", snapshot("Milk"), {"If-Match": '"0"', "X-Write-Id": "1731-phone"})
+        self.call("PUT", "/state", snapshot("Milk", "Eggs"), {"If-Match": '"1"', "X-Write-Id": "1732-laptop"})
+        status, _, _ = self.call("PUT", "/state", snapshot("Bread"), {"If-Match": '"1"', "X-Write-Id": "1733-late"})
+        self.assertEqual(412, status)  # a write that wasn't taken isn't anyone's
+        status, _, headers = self.call("GET", "/state")
+        self.assertEqual((200, "1:1731-phone, 2:1732-laptop"), (status, headers["X-Writes"]))
+
+    def test_a_write_with_no_id_or_a_bad_one_is_taken_as_before(self):
+        self.call("PUT", "/state", snapshot("Milk"), {"If-Match": '"0"', "X-Write-Id": "1731-phone"})
+        status, _, headers = self.call("PUT", "/state", snapshot("Eggs"), {"If-Match": '"1"'})
+        self.assertEqual((200, '"2"'), (status, headers["ETag"]))
+        for i, bad in enumerate(("a,b", "../x", "x" * 65)):
+            status, _, _ = self.call("PUT", "/state", snapshot("Bread"), {"If-Match": f'"{2 + i}"', "X-Write-Id": bad})
+            self.assertEqual(200, status, bad)
+        status, body, headers = self.call("GET", "/state")
+        self.assertEqual(("1:1731-phone", ["Bread"]), (headers["X-Writes"], [i["name"] for i in json.loads(body)["items"]]))
+
+    def test_only_the_last_writes_ids_are_kept(self):
+        keep, srv.KEEP_WRITES = srv.KEEP_WRITES, 3
+        try:
+            for n in range(5):
+                self.call("PUT", "/state", snapshot("Milk"), {"If-Match": f'"{n}"', "X-Write-Id": f"w{n}"})
+        finally:
+            srv.KEEP_WRITES = keep
+        self.assertEqual("3:w2, 4:w3, 5:w4", self.call("GET", "/state")[2]["X-Writes"])
+
     def test_unchanged_answers_304(self):
         self.call("PUT", "/state", snapshot("Milk"), {"If-Match": '"0"'})
         status, body, _ = self.call("GET", "/state", headers={"If-None-Match": '"1"'})
