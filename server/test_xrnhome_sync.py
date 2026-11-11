@@ -10,6 +10,7 @@ import tempfile
 import threading
 import time
 import unittest
+import unittest.mock
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
@@ -188,6 +189,18 @@ class SyncServerTest(unittest.TestCase):
         self.assertEqual(401, self.guess("2001:db8:1:3::1"))  # the /64 next door isn't held
         self.assertEqual(401, self.guess("::ffff:203.0.113.40"))  # an IPv4 caller written as IPv6
         self.assertIn("203.0.113.40", srv.failures)  # ...is counted as that IPv4 address
+
+    def test_a_name_that_isnt_there_costs_a_check_like_one_that_is(self):
+        import bcrypt
+
+        def checks(login):
+            header = "Basic " + base64.b64encode(login.encode()).decode()
+            with unittest.mock.patch.object(bcrypt, "checkpw", wraps=bcrypt.checkpw) as checkpw:
+                self.assertIsNone(srv.check_login(header))
+            return checkpw.call_count
+        self.assertEqual(1, checks("sonn:nope"))
+        self.assertEqual(1, checks("nobody:nope"))  # none: the answer came sooner, and said so
+        self.assertIsNone(srv.check_login("Basic " + base64.b64encode(b"nobody:secret").decode()))
 
     def test_a_request_with_no_password_isnt_held(self):
         # The hold after a wrong password slows a guesser down. One that sent no password, as the
