@@ -384,15 +384,17 @@ class Handler(BaseHTTPRequestHandler):
     def login(self):
         addr = client_address(self)
         if locked_out(addr, self.headers.get("Authorization")):
-            time.sleep(FAIL_DELAY_S)
+            if self.headers.get("Authorization"):
+                time.sleep(FAIL_DELAY_S)
             self.send(429, "too many wrong passwords; try again later",
                       headers={"Retry-After": str(FAIL_WINDOW_S)})
             return None
         user = check_login(self.headers.get("Authorization"))
         if not user:
+            # A request with no password guessed nothing, and needn't hold a thread for it.
             if self.headers.get("Authorization"):
                 note_failure(addr, self.headers.get("Authorization"))
-            time.sleep(FAIL_DELAY_S)
+                time.sleep(FAIL_DELAY_S)
             self.send(401, "login required", headers={"WWW-Authenticate": 'Basic realm="xrnhome"'})
             return None
         with fail_lock:
