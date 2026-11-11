@@ -6,6 +6,7 @@ import base64
 import importlib.util
 import json
 import os
+import socket
 import tempfile
 import threading
 import time
@@ -166,6 +167,11 @@ class SyncServerTest(unittest.TestCase):
         for name in ("..%2Fusers", ".hidden.jpg", "a/b.jpg", "a..b.jpg"):
             self.assertIn(self.call("PUT", f"/photos/{name}", b"x", raw=True)[0], (400, 404), name)
         self.assertEqual(404, self.call("GET", "/photos/..%2F..%2Fusers")[0])
+
+    def test_an_unparseable_request_gets_an_answer(self):
+        with socket.create_connection(("127.0.0.1", self.httpd.server_address[1]), timeout=10) as s:
+            s.sendall(b"GARBAGE\r\n\r\n")
+            self.assertIn(b"400", s.recv(200))
 
     def test_everything_but_health_needs_the_login(self):
         self.assertEqual((200, b"ok"), self.call("GET", "/health", password=None)[:2])
