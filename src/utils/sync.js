@@ -18,7 +18,7 @@ import {
   failureText,
 } from "./homeServer";
 import { canonical } from "./inventoryLogic";
-import { CURRENT_SCHEMA_VERSION } from "./storage";
+import { CURRENT_SCHEMA_VERSION, itemsEntry } from "./storage";
 import {
   ensureImageDir,
   isSafePhotoName,
@@ -86,12 +86,15 @@ export async function loadSyncBase() {
   }
 }
 
-// Saved as one, so the version never names a different copy from the base.
-export async function saveSyncState(meta, base) {
+// Saved as one, so the version never names a different copy from the base; with
+// `items` when a merge made them, so the base never stands under items it wasn't
+// merged into either.
+export async function saveSyncState(meta, base, items) {
   try {
     await AsyncStorage.multiSet([
       [META_KEY, JSON.stringify(meta)],
       [BASE_KEY, JSON.stringify(base)],
+      ...(items ? [itemsEntry(items)] : []),
     ]);
   } catch (error) {
     console.error("Failed to save the sync state:", error);

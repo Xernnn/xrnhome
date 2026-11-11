@@ -51,7 +51,7 @@ import {
   prepareItems,
   tooManyGone,
 } from "../utils/inventoryLogic";
-import { CURRENT_SCHEMA_VERSION, saveItems } from "../utils/storage";
+import { CURRENT_SCHEMA_VERSION } from "../utils/storage";
 import {
   clearOldDownloads,
   downloadRelease,
@@ -193,13 +193,14 @@ export function SyncProvider({ children }) {
     saveSyncMeta(next);
   }, []);
 
-  // What this device now stands on. The refs change at once, not on the next
-  // render, because the round that called this reads them straight after.
-  const storeSynced = useCallback(async (next, base) => {
+  // What this device now stands on, with the items a merge with it made. The
+  // refs change at once, not on the next render, because the round that called
+  // this reads them straight after.
+  const storeSynced = useCallback(async (next, base, items) => {
     metaRef.current = next;
     baseRef.current = base;
     setMeta(next);
-    await saveSyncState(next, base);
+    await saveSyncState(next, base, items);
   }, []);
 
   // Sends `list`, noting first what's on its way: the list, its hash, and the id
@@ -256,8 +257,9 @@ export function SyncProvider({ children }) {
   // From here on this device stands on `copy`, whether or not sending the merged
   // list then works. Otherwise a retry would merge the same changes a second time,
   // and quantities, which add up, would count them twice. For the same reason the
-  // merged items are saved before the new base: dying between the two then only
-  // means merging again, never reading the other side's changes as undone here.
+  // merged items and the new base are saved in one write: dying between two would
+  // leave the merged items on the old base, and the next launch would merge the
+  // same changes into them again.
   const takeServerCopy = useCallback(
     async (target, copy) => {
       const known = metaRef.current;
@@ -334,7 +336,6 @@ export function SyncProvider({ children }) {
         refuse("shrink");
         return false;
       }
-      await saveItems(merged);
       mergeServerItems(base?.items, theirs);
       itemsRef.current = merged;
       categoriesRef.current = nextList;
@@ -344,7 +345,8 @@ export function SyncProvider({ children }) {
           syncedAt: new Date().toISOString(),
           hash: itemsHash(theirs, theirCategories),
         },
-        { items: theirs, categories: theirCategories }
+        { items: theirs, categories: theirCategories },
+        merged
       );
       return true;
     },

@@ -448,6 +448,51 @@ describe("a write the server took but whose answer never arrived", () => {
   });
 });
 
+describe("a merge the app died in the middle of", () => {
+  it("is made once on the next launch, not again on top of itself", async () => {
+    await launch();
+    await add("Milk");
+    await wait(16000);
+    const { id } = app.inventory.items[0];
+    // The laptop buys two, and one is bought here before that comes down: 1 + 2 + 1.
+    const updatedAt = new Date(Date.now() + 1000).toISOString();
+    server.doc = {
+      ...server.doc,
+      items: server.doc.items.map((item) => ({ ...item, quantity: 3, updatedAt })),
+    };
+    server.version += 1;
+    await act(async () => app.inventory.buyItem(id, 1));
+
+    // The app dies as the merge's new base is being saved: the next launch has
+    // what was saved before that, and nothing after it reaches the server.
+    const store = AsyncStorage.__INTERNAL_MOCK_STORAGE__;
+    const save = AsyncStorage.multiSet.getMockImplementation();
+    let disk = null;
+    AsyncStorage.multiSet.mockImplementation((pairs, ...rest) => {
+      if (!disk && pairs.some(([key]) => key === "xrnhome_sync_base")) {
+        disk = { ...store };
+        server.refuse = 503;
+      }
+      return save(pairs, ...rest);
+    });
+    try {
+      await wait(16000);
+    } finally {
+      AsyncStorage.multiSet.mockImplementation(save);
+    }
+    expect(disk).not.toBeNull();
+    await quit();
+    Object.keys(store).forEach((key) => delete store[key]);
+    Object.assign(store, disk);
+    server.refuse = 0;
+
+    await launch();
+    await wait(16000);
+    expect(app.inventory.items[0].quantity).toBe(4);
+    expect(server.doc.items[0].quantity).toBe(4);
+  });
+});
+
 describe("a server that was put back to an older copy", () => {
   it("is merged with once the person says to keep both", async () => {
     await launch();

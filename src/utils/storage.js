@@ -148,10 +148,15 @@ export const loadItems = async () => {
   return { status: "recovered", items };
 };
 
+// The items as saveItems saves them, for saving them in one go with something else.
+export const itemsEntry = (items) => [
+  STORAGE_KEY,
+  JSON.stringify(Array.isArray(items) ? items : []),
+];
+
 export const saveItems = async (items) => {
   try {
-    const payload = JSON.stringify(Array.isArray(items) ? items : []);
-    await AsyncStorage.setItem(STORAGE_KEY, payload);
+    await AsyncStorage.setItem(...itemsEntry(items));
     return true;
   } catch (error) {
     console.error("Failed to save items to AsyncStorage:", error);
