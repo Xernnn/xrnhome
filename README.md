@@ -81,7 +81,7 @@ and update itself from it. Your data goes nowhere else.
 
 ## Requirements
 
-- [Node.js](https://nodejs.org/) 18 or newer
+- [Node.js](https://nodejs.org/) 20.19.4 or newer (React Native 0.81's minimum)
 - The [Expo Go](https://expo.dev/go) app on your phone, for development
 
 ## Getting started
@@ -154,7 +154,7 @@ installs an update signed with the same key as the app already on the phone.
 [`server/xrnhome-sync.py`](server/xrnhome-sync.py) is a single Python file with
 no dependencies besides `bcrypt`. It stores one copy of your items per user,
 plus their photos, and checks logins against an htpasswd file with bcrypt hashes
-(Radicale's works as it is):
+(Radicale's works as it is). Use Python 3.14.7 or newer: older versions answer a malformed request with no HTTP status line, which the server tests check for.
 
 ```bash
 pip install bcrypt
