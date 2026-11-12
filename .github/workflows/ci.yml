@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+# Read-only: CI checks code and needs to change nothing on the repository.
+permissions:
+  contents: read
+
+jobs:
+  app:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          # react-native 0.81 needs 20.19.4 or newer (the README's "18 or newer"
+          # predates it); 22 is the oldest LTS line still supported.
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Unit tests
+        run: npm test -- --ci
+
+  server:
+    # The home sync server (server/) is a separate Python program with its own
+    # unittest suite; it shares nothing with the app's npm dependencies.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          # test_an_unparseable_request_gets_an_answer wants a 400 status line,
+          # which http.server only sends for a malformed request line since
+          # 3.14.7 (gh-54930); the runner's own Python is older.
+          python-version: "3.14"
+          check-latest: true
+
+      - name: bcrypt
+        run: pip install --quiet bcrypt
+
+      - name: Server tests
+        run: python -m unittest server/test_xrnhome_sync.py
