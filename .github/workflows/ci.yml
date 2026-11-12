@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+# Read-only: CI checks code and needs to change nothing on the repository.
+permissions:
+  contents: read
+
+jobs:
+  app:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          # react-native 0.81 needs 20.19.4 or newer (the README's "18 or newer"
+          # predates it); 22 is the oldest LTS line still supported.
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Unit tests
+        run: npm test -- --ci
+
+  server:
+    # The home sync server (server/) is a separate Python program with its own
+    # unittest suite; it shares nothing with the app's npm dependencies.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # A virtualenv: the runner's Python refuses system-wide pip installs (PEP 668).
+      - name: bcrypt
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet bcrypt
+
+      - name: Server tests
+        run: |
+          "$RUNNER_TEMP/venv/bin/python" -m unittest server/test_xrnhome_sync.py
