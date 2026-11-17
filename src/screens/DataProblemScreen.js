@@ -8,6 +8,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useInventory } from "../context/InventoryContext";
 import { useTheme } from "../context/ThemeContext";
 import { deviceName } from "../utils/homeServer";
+import { setAsideItems } from "../utils/storage";
 import { useSync } from "../context/SyncContext";
 import { Card, OutlinePill, PillButton, TextButton } from "../components/ui";
 import { SPACING, TYPE, itemCount } from "../utils/constants";
@@ -47,7 +48,13 @@ export default function DataProblemScreen() {
         {
           text: "Start over",
           style: "destructive",
-          onPress: () => replaceAllItems([], undefined),
+          onPress: () =>
+            run(async () => {
+              if (!(await setAsideItems())) {
+                throw new Error("Couldn't set the items aside. Nothing changed.");
+              }
+              replaceAllItems([], undefined);
+            }),
         },
       ]
     );

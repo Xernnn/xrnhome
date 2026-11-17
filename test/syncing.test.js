@@ -12,6 +12,7 @@ import { ThemeProvider } from "../src/context/ThemeContext";
 import { InventoryProvider, useInventory } from "../src/context/InventoryContext";
 import { SyncProvider, useSync } from "../src/context/SyncContext";
 import EditItemScreen from "../src/screens/EditItemScreen";
+import DataProblemScreen from "../src/screens/DataProblemScreen";
 
 jest.mock("@react-native-async-storage/async-storage", () =>
   require("@react-native-async-storage/async-storage/jest/async-storage-mock")
@@ -261,6 +262,54 @@ describe("a list that had to be recovered", () => {
     await launch();
     expect(app.inventory.problem).toBeNull();
     expect(app.inventory.items).toHaveLength(6);
+  });
+});
+
+describe("a list that couldn't be read at all", () => {
+  const DAMAGED_KEY = "xrnhome_items_damaged";
+  const saved = JSON.stringify([{ id: "a", name: "Milk" }, { id: "b", name: "Rice" }]);
+
+  // The read of the items fails (`failing()` says whether it does now), then
+  // Start over is picked on the screen that shows.
+  const startOverWhile = async (failing) => {
+    SecureStore.getItemAsync.mockResolvedValue(null);
+    await AsyncStorage.setItem(ITEMS_KEY, saved);
+    const read = AsyncStorage.getItem.getMockImplementation();
+    AsyncStorage.getItem.mockImplementation((key, ...rest) =>
+      key === ITEMS_KEY && failing() ? Promise.reject(new Error("busy")) : read(key, ...rest)
+    );
+    try {
+      await launch();
+      expect(app.inventory.problem).toEqual({ type: "unreadable" });
+      await act(async () => {
+        showScreen(<DataProblemScreen />);
+      });
+      const [startOver] = renderer.root.findAll(
+        (node) => node.props.label === "Start over" && typeof node.props.onPress === "function"
+      );
+      await act(async () => startOver.props.onPress());
+      const [, , choices] = Alert.alert.mock.calls.at(-1);
+      await act(async () => {
+        await choices.find((choice) => choice.text === "Start over").onPress();
+      });
+      await wait(0);
+    } finally {
+      AsyncStorage.getItem.mockImplementation(read);
+    }
+  };
+
+  it("sets the saved text aside before starting over, as the question says", async () => {
+    let reads = 0;
+    await startOverWhile(() => (reads += 1) === 1);
+    expect(app.inventory.problem).toBeNull();
+    expect(await AsyncStorage.getItem(DAMAGED_KEY)).toBe(saved);
+    expect(await AsyncStorage.getItem(ITEMS_KEY)).toBe("[]");
+  });
+
+  it("writes nothing over the items while they still can't be read", async () => {
+    await startOverWhile(() => true);
+    expect(app.inventory.problem).toEqual({ type: "unreadable" });
+    expect(await AsyncStorage.getItem(ITEMS_KEY)).toBe(saved);
   });
 });
 
