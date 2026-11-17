@@ -659,6 +659,13 @@ export function SyncProvider({ children }) {
 
   // --- what Settings does ----------------------------------------------------
 
+  // Once no sync is on its way.
+  const syncsSettled = useCallback(async () => {
+    while (pushing.current) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }, []);
+
   // Checks the login, saves it, and makes the first sync: straight up when the
   // server is empty, else it stops and asks (restore, or replace).
   const connect = useCallback(
@@ -677,6 +684,8 @@ export function SyncProvider({ children }) {
       if (res.status === 200 && !res.headers.get("ETag")) {
         throw new Error("That address answers, but it isn't an xrnhome server.");
       }
+      // Not under a sync with the server before, which would store that one's state over this.
+      await syncsSettled();
       await saveServer(target);
       const fresh = { version: null, syncedAt: null, hash: null };
       storeMeta(fresh);
@@ -689,20 +698,32 @@ export function SyncProvider({ children }) {
       setStatus({ state: "idle" });
       await push(null);
     },
-    [push, storeMeta]
+    [push, storeMeta, syncsSettled]
   );
 
   const disconnect = useCallback(async () => {
     if (timer.current) clearTimeout(timer.current);
+    timer.current = null;
     await clearServer();
-    await clearSyncMeta();
-    baseRef.current = null;
     refused.current = null;
     setServer(null);
-    setMeta({ version: null, syncedAt: null, hash: null });
     setStatus({ state: "off" });
     setUpdate({ state: "idle" });
-  }, []);
+    // A sync on its way goes on to its end with what it knows, and stores what
+    // it got then. Forgotten under it, the server's state came back once it
+    // ended; and the sync went on from nothing, as if it had never synced.
+    await syncsSettled();
+    if (serverRef.current) {
+      return; // another server, connected meanwhile, has its own
+    }
+    const fresh = { version: null, syncedAt: null, hash: null };
+    await clearSyncMeta();
+    metaRef.current = fresh;
+    baseRef.current = null;
+    sentRef.current = null;
+    setMeta(fresh);
+    setStatus({ state: "off" });
+  }, [syncsSettled]);
 
   const syncNow = useCallback(() => push(undefined, true), [push]);
 

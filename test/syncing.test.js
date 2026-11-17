@@ -452,6 +452,33 @@ describe("the Edit form of an item a sync took away", () => {
   });
 });
 
+describe("disconnecting", () => {
+  it("forgets the server's state, even with a sync still on its way", async () => {
+    await launch();
+    await add("Milk");
+    await wait(16000);
+    // Bread goes up over a slow connection, and Disconnect is tapped meanwhile.
+    server.delay = 5000;
+    await add("Bread");
+    const asked = server.fetch.mock.calls.length;
+    await wait(15500);
+    expect(server.fetch.mock.calls.length).toBe(asked + 1);
+    await act(async () => {
+      app.sync.disconnect();
+    });
+    expect(app.sync.status.state).toBe("off");
+    await wait(20000);
+    expect(server.doc.items.map((item) => item.name).sort()).toEqual(["Bread", "Milk"]);
+    const kept = await AsyncStorage.multiGet(["xrnhome_sync_meta", "xrnhome_sync_base", "xrnhome_sync_sent"]);
+    expect(kept).toEqual([
+      ["xrnhome_sync_meta", null],
+      ["xrnhome_sync_base", null],
+      ["xrnhome_sync_sent", null],
+    ]);
+    expect(app.sync.meta.version).toBeNull();
+  });
+});
+
 describe("leaving the app", () => {
   // Jest runs as iOS, which like the laptop isn't Android.
   it("sends a change that was waiting straight away, on any platform", async () => {
