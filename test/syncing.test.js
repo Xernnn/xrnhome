@@ -176,7 +176,7 @@ beforeEach(async () => {
   server = makeServer();
   global.fetch = server.fetch;
   SecureStore.getItemAsync.mockResolvedValue(
-    JSON.stringify({ url: URL, user: "sonn", password: "secret" })
+    JSON.stringify({ url: URL, user: "alex", password: "secret" })
   );
   AppState.currentState = "active";
   FileSystem.downloadAsync.mockImplementation(async () => ({ status: 404 }));
