@@ -151,7 +151,7 @@ export default function SettingsScreen({ navigation }) {
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
-      <PageTitle title="settings" />
+      <PageTitle title="Settings" />
 
       <ScrollView
         style={styles.scroll}

@@ -43,7 +43,6 @@ import {
   reducer,
   takeOffList,
 } from "../utils/inventoryLogic";
-import { readPackColours } from "../utils/packColourCache";
 import { useTheme } from "./ThemeContext";
 
 const InventoryContext = createContext(null);
@@ -59,11 +58,7 @@ export function InventoryProvider({ children }) {
   const load = useCallback(async () => {
     const list = setCustomCategories(await loadCategories());
     setCategories(list);
-    const [stored, version] = await Promise.all([
-      loadItems(),
-      loadSchemaVersion(),
-      readPackColours(),
-    ]);
+    const [stored, version] = await Promise.all([loadItems(), loadSchemaVersion()]);
     if (stored.status === "unreadable") {
       dispatch({
         type: ACTIONS.SET_ITEMS,

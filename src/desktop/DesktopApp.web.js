@@ -3,7 +3,7 @@ import "./desktop.css";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { describeSync, useSync } from "../context/SyncContext";
-import ThemeContext, { useTheme } from "../context/ThemeContext";
+import { useTheme } from "../context/ThemeContext";
 import AddItemScreen from "../screens/AddItemScreen";
 import CategoriesScreen from "../screens/CategoriesScreen";
 import EditItemScreen from "../screens/EditItemScreen";
@@ -14,8 +14,7 @@ import SettingsScreen from "../screens/SettingsScreen";
 import ShoppingScreen from "../screens/ShoppingScreen";
 import UndoToast from "../components/UndoToast";
 import { Wordmark } from "../components/ui";
-import { DARK_COLORS, ROOMS } from "../utils/constants";
-import flyToBasket from "./fly";
+import { ROOMS } from "../utils/constants";
 import { Icon } from "./parts";
 import QuickAdd from "./QuickAdd";
 import { useHashRoute, useScreenStack } from "./useScreenStack";
@@ -66,8 +65,7 @@ function SyncLine({ onOpen }) {
 }
 
 export default function DesktopApp() {
-  const theme = useTheme();
-  const { colors, isDark } = theme;
+  const { colors, isDark } = useTheme();
   const [route, go] = useHashRoute();
   const panel = useScreenStack();
   const nameRef = useRef(null);
@@ -107,10 +105,6 @@ export default function DesktopApp() {
   );
   const addWithDetails = useCallback((params) => show(["AddItem", params]), [show]);
   const roomRoute = useMemo(() => ({ params: { room: room?.key } }), [room?.key]);
-  const basketTheme = useMemo(
-    () => ({ ...theme, isDark: true, colors: DARK_COLORS }),
-    [theme]
-  );
 
   const panelOpen = !!panel.top;
   useEffect(() => {
@@ -137,7 +131,6 @@ export default function DesktopApp() {
         key={room.key}
         navigation={pageNavigation}
         route={roomRoute}
-        onListed={flyToBasket}
       />
     );
   } else {
@@ -205,9 +198,7 @@ export default function DesktopApp() {
             />
           ) : (
             <div className="dk-basket">
-              <ThemeContext.Provider value={basketTheme}>
-                <ShoppingScreen navigation={pageNavigation} />
-              </ThemeContext.Provider>
+              <ShoppingScreen navigation={pageNavigation} />
             </div>
           )}
         </aside>

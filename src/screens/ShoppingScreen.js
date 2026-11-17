@@ -16,7 +16,6 @@ import { useTheme } from "../context/ThemeContext";
 import {
   GroupCard,
   Hairline,
-  ItemThumb,
   PageTitle,
   RoundIconButton,
   Segmented,
@@ -123,6 +122,11 @@ export default function ShoppingScreen({ navigation }) {
     [items, inCart]
   );
   const sections = useMemo(() => inSections(toBuy), [toBuy]);
+  // One card, in the order things are found in; each row names its category.
+  const toBuyInOrder = useMemo(
+    () => sections.flatMap((section) => section.items),
+    [sections]
+  );
 
   const openDetail = (id) => navigation.navigate("ItemDetail", { itemId: id });
 
@@ -284,7 +288,6 @@ export default function ShoppingScreen({ navigation }) {
       accessibilityRole="button"
       accessibilityLabel={`${item.name}, ${status}. Opens the item`}
     >
-      <ItemThumb item={item} size={44} />
       <View style={styles.rowInfo}>
         <Text
           style={[styles.rowName, done && styles.rowNameDone]}
@@ -333,7 +336,7 @@ export default function ShoppingScreen({ navigation }) {
   const renderToBuyRow = (item) => (
     <View style={styles.row}>
       {renderCheckbox(item, false)}
-      {renderInfo(item, stockText(item))}
+      {renderInfo(item, `${item.category} · ${stockText(item)}`)}
       {renderIconButton("close", `Take ${item.name} off the list`, () => skip(item))}
     </View>
   );
@@ -357,7 +360,7 @@ export default function ShoppingScreen({ navigation }) {
     );
   };
 
-  const renderSectionToggle = (key, icon, title, count) => (
+  const renderSectionToggle = (key, title, count) => (
     <TouchableOpacity
       activeOpacity={0.7}
       style={[styles.sectionHeaderRow, styles.sectionSpacer]}
@@ -365,11 +368,6 @@ export default function ShoppingScreen({ navigation }) {
       accessibilityRole="button"
       accessibilityState={{ expanded: open[key] }}
     >
-      <MaterialCommunityIcons
-        name={icon}
-        size={16}
-        color={colors.textSecondary}
-      />
       <Text style={styles.sectionTitle}>{title}</Text>
       <Text style={styles.sectionCountText}>{count}</Text>
       <View style={styles.flex} />
@@ -386,7 +384,7 @@ export default function ShoppingScreen({ navigation }) {
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
       <PageTitle
-        title="shopping"
+        title="Shopping"
         subtitle={
           toBuy.length === 0 && cartCount === 0
             ? "Nothing to buy right now"
@@ -445,11 +443,6 @@ export default function ShoppingScreen({ navigation }) {
         ) : null}
 
         <View style={[styles.sectionHeaderRow, styles.toBuyHeader]}>
-          <MaterialCommunityIcons
-            name="cart-outline"
-            size={16}
-            color={colors.textSecondary}
-          />
           <Text style={styles.sectionTitle}>To buy</Text>
           <Text style={styles.sectionCountText}>{toBuy.length}</Text>
         </View>
@@ -458,12 +451,7 @@ export default function ShoppingScreen({ navigation }) {
             Nothing to buy. Items on your list show up here when they run low.
           </Text>
         ) : null}
-        {sections.map((section) => (
-          <Fragment key={section.key}>
-            <Text style={styles.sectionLine}>{section.label}</Text>
-            {renderGroup(section.items, renderToBuyRow)}
-          </Fragment>
-        ))}
+        {renderGroup(toBuyInOrder, renderToBuyRow)}
 
         {cartCount > 0 ? (
           <>
@@ -475,12 +463,7 @@ export default function ShoppingScreen({ navigation }) {
           </>
         ) : null}
 
-        {renderSectionToggle(
-          "stocked",
-          "check-circle-outline",
-          "Not needed yet",
-          stocked.length
-        )}
+        {renderSectionToggle("stocked", "Not needed yet", stocked.length)}
         {open.stocked
           ? renderGroup(stocked, (item) => (
               <View style={styles.row}>
@@ -503,7 +486,7 @@ export default function ShoppingScreen({ navigation }) {
           </Text>
         ) : null}
 
-        {renderSectionToggle("ranOut", "history", "Ran out", ranOut.length)}
+        {renderSectionToggle("ranOut", "Ran out", ranOut.length)}
         {open.ranOut
           ? renderGroup(ranOut, (item) => (
               <View style={styles.row}>
@@ -592,20 +575,12 @@ const createStyles = (colors) =>
     sectionTitle: {
       ...TYPE.section,
       color: colors.textSecondary,
-      marginLeft: 8,
     },
     sectionCountText: {
       fontFamily: FONTS.monoMedium,
       fontSize: 12,
       color: colors.textSecondary,
       marginLeft: 8,
-    },
-    sectionLine: {
-      ...TYPE.caption,
-      fontWeight: "600",
-      color: colors.textSecondary,
-      marginLeft: 6,
-      marginBottom: 6,
     },
     emptySection: {
       ...TYPE.bodySmall,
@@ -657,11 +632,10 @@ const createStyles = (colors) =>
     },
     rowInfo: {
       flex: 1,
-      marginLeft: 14,
     },
     rowName: {
       ...TYPE.body,
-      fontWeight: "600",
+      fontWeight: "500",
       color: colors.textPrimary,
     },
     rowNameDone: {

@@ -1,12 +1,11 @@
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
   FlatList,
-  ScrollView,
+  Platform,
   Text,
   TouchableOpacity,
   View,
   StyleSheet,
-  useWindowDimensions,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
@@ -14,22 +13,14 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useInventory } from "../context/InventoryContext";
 import { useTheme } from "../context/ThemeContext";
 import SearchBar from "../components/SearchBar";
-import ItemCard from "../components/ItemCard";
-import {
-  GRID_GAP,
-  GRID_GUTTER,
-  GridHeader,
-  GridRow,
-  buildRows,
-  cardWidthFor,
-} from "../components/CategoryGrid";
+import ItemRow from "../components/ItemRow";
 import EmptyState from "../components/EmptyState";
-import { Chip, PageTitle, RoundIconButton } from "../components/ui";
+import { PageTitle, RoundIconButton } from "../components/ui";
 import { haptics } from "../utils/haptics";
 import {
+  FORM_WIDTH,
   RADIUS,
   ROOMS,
-  PAGE_WIDTH,
   SPACING,
   TYPE,
   daysUntilExpiry,
@@ -41,11 +32,11 @@ import {
   itemCount,
 } from "../utils/constants";
 
-// The narrowest a card can be before its words and buttons run out of room. A
-// window with space to spare keeps its cards at the larger size.
-const MIN_CARD_WIDTH = 150;
-const MIN_ROOMY_CARD_WIDTH = 230;
-const ROOMY_FROM = 640;
+// In a browser window the list keeps to a readable width, as a phone shows it.
+const COLUMN =
+  Platform.OS === "web"
+    ? { width: "100%", maxWidth: FORM_WIDTH, alignSelf: "center" }
+    : null;
 
 const groupByCategory = (list, room) => {
   const categories = getRoomCategories(room);
@@ -58,28 +49,34 @@ const groupByCategory = (list, room) => {
     .filter((group) => group.items.length > 0);
 };
 
-// `onListed` hears about what went on the shopping list, and from which photo.
-export default function RoomScreen({ navigation, route, onListed }) {
+// A room's page is one flat list, so that only what's on screen gets drawn: for
+// each group a heading, then its items as the rows of one card.
+export const buildRows = (groups) =>
+  groups.flatMap((group) => [
+    {
+      type: "header",
+      key: `header-${group.label}`,
+      label: group.label,
+      count: group.items.length,
+    },
+    ...group.items.map((item, index) => ({
+      type: "item",
+      key: item.id,
+      item,
+      first: index === 0,
+      last: index === group.items.length - 1,
+    })),
+  ]);
+
+export default function RoomScreen({ navigation, route }) {
   const room = getRoomMeta(route.params && route.params.room);
-  const { items, stepItem, buyItem, toggleOnList } = useInventory();
+  const { items, stepItem, buyItem } = useInventory();
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
-  const { width, fontScale } = useWindowDimensions();
-  // What the page was given, which on a laptop is less than the window.
-  const [measured, setMeasured] = useState(0);
-  const pageWidth = measured || Math.min(width, PAGE_WIDTH);
-  const shown = pageWidth / fontScale;
-  const smallest = shown >= ROOMY_FROM ? MIN_ROOMY_CARD_WIDTH : MIN_CARD_WIDTH;
-  const columns = Math.max(
-    2,
-    Math.floor((shown - GRID_GUTTER * 2 + GRID_GAP) / (smallest + GRID_GAP))
-  );
-  const cardWidth = cardWidthFor(pageWidth, columns);
 
   const [search, setSearch] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [expiringOnly, setExpiringOnly] = useState(false);
-  const [chosen, setChosen] = useState(null);
 
   const allInRoom = useMemo(
     () => items.filter((item) => item.room === room.key),
@@ -100,15 +97,6 @@ export default function RoomScreen({ navigation, route, onListed }) {
   );
   const showingExpiring = expiringOnly && expiring.length > 0 && !searching;
 
-  const byCategory = useMemo(
-    () => groupByCategory(inStock, room.key),
-    [inStock, room.key]
-  );
-  // A category that has just run out of items lets go of the filter.
-  const category = byCategory.some((group) => group.meta.label === chosen)
-    ? chosen
-    : null;
-
   // A search looks through everything, in every room, in stock or not.
   const groups = useMemo(() => {
     if (searching) {
@@ -116,31 +104,20 @@ export default function RoomScreen({ navigation, route, onListed }) {
         item.name.toLowerCase().includes(query)
       );
       return ROOMS.map((entry) => ({
-        meta: { label: entry.label, icon: entry.icon, color: colors.textSecondary },
+        label: entry.label,
         items: matches.filter((item) => item.room === entry.key),
       })).filter((group) => group.items.length > 0);
     }
     if (showingExpiring) {
-      return [
-        {
-          meta: {
-            label: "Expiring soon",
-            icon: "clock-alert-outline",
-            color: colors.warning,
-          },
-          items: expiring,
-        },
-      ];
+      return [{ label: "Expiring soon", items: expiring }];
     }
-    // The chips name the categories, so the cards run on with no heading between
-    // them: a category of one would otherwise sit alone on its row.
-    const shown = byCategory
-      .filter((group) => !category || group.meta.label === category)
-      .flatMap((group) => group.items);
-    return shown.length > 0 ? [{ meta: null, items: shown }] : [];
-  }, [searching, query, items, showingExpiring, expiring, byCategory, category, colors]);
+    return groupByCategory(inStock, room.key).map((group) => ({
+      label: group.meta.label,
+      items: group.items,
+    }));
+  }, [searching, query, items, showingExpiring, expiring, inStock, room.key]);
 
-  const rows = useMemo(() => buildRows(groups, columns), [groups, columns]);
+  const rows = useMemo(() => buildRows(groups), [groups]);
   const shownCount = groups.reduce((sum, group) => sum + group.items.length, 0);
 
   const openAddItem = useCallback(
@@ -166,38 +143,28 @@ export default function RoomScreen({ navigation, route, onListed }) {
     [buyItem]
   );
 
-  const handleList = useCallback(
-    (id, photo) => {
-      haptics.light();
-      if (toggleOnList(id) && onListed) {
-        onListed(photo);
-      }
-    },
-    [toggleOnList, onListed]
-  );
-
-  const renderCard = useCallback(
-    (item) => (
-      <ItemCard
-        item={item}
-        width={cardWidth}
-        onOpen={openDetail}
-        onStep={handleStep}
-        onBuy={handleBuy}
-        onList={handleList}
-      />
-    ),
-    [cardWidth, openDetail, handleStep, handleBuy, handleList]
-  );
-
   const renderRow = useCallback(
     ({ item: row }) =>
       row.type === "header" ? (
-        <GridHeader meta={row.meta} count={row.count} />
+        <View style={styles.header} accessibilityRole="header">
+          <Text style={styles.headerLabel} numberOfLines={1}>
+            {row.label}
+          </Text>
+          <Text style={styles.headerCount}>{row.count}</Text>
+        </View>
       ) : (
-        <GridRow row={row} columns={columns} renderCard={renderCard} />
+        <View style={styles.rowWrap}>
+          <ItemRow
+            item={row.item}
+            first={row.first}
+            last={row.last}
+            onOpen={openDetail}
+            onStep={handleStep}
+            onBuy={handleBuy}
+          />
+        </View>
       ),
-    [columns, renderCard]
+    [styles, openDetail, handleStep, handleBuy]
   );
 
   const toggleSearch = () => {
@@ -277,41 +244,10 @@ export default function RoomScreen({ navigation, route, onListed }) {
     />
   );
 
-  const chips =
-    !searching && !showingExpiring && byCategory.length > 1 ? (
-      <ScrollView
-        horizontal
-        style={styles.chips}
-        contentContainerStyle={styles.chipsInner}
-        showsHorizontalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-      >
-        <Chip
-          label="All"
-          count={inStock.length}
-          selected={!category}
-          onPress={() => setChosen(null)}
-        />
-        {byCategory.map(({ meta, items: inCategory }) => (
-          <Chip
-            key={meta.label}
-            label={meta.label}
-            count={inCategory.length}
-            selected={category === meta.label}
-            onPress={() => setChosen(category === meta.label ? null : meta.label)}
-          />
-        ))}
-      </ScrollView>
-    ) : null;
-
   return (
-    <SafeAreaView
-      style={styles.safe}
-      edges={["top"]}
-      onLayout={(event) => setMeasured(event.nativeEvent.layout.width)}
-    >
+    <SafeAreaView style={[styles.safe, COLUMN]} edges={["top"]}>
       <PageTitle
-        title={room.label.toLowerCase()}
+        title={room.label}
         subtitle={itemCount(inStock.length)}
         actions={
           <>
@@ -340,8 +276,6 @@ export default function RoomScreen({ navigation, route, onListed }) {
           ) : null}
         </View>
       ) : null}
-
-      {chips}
 
       {rows.length === 0 ? (
         empty
@@ -382,15 +316,26 @@ const createStyles = (colors) =>
     list: {
       flex: 1,
     },
-    chips: {
-      flexGrow: 0,
-      flexShrink: 0,
+    header: {
+      flexDirection: "row",
+      alignItems: "center",
+      marginHorizontal: SPACING.screen + 4,
+      marginTop: 18,
+      marginBottom: 8,
     },
-    chipsInner: {
-      paddingHorizontal: SPACING.screen,
-      paddingTop: 4,
-      paddingBottom: 10,
-      gap: 6,
+    headerLabel: {
+      ...TYPE.section,
+      flexShrink: 1,
+      color: colors.textSecondary,
+    },
+    headerCount: {
+      ...TYPE.section,
+      marginLeft: 8,
+      color: colors.textSecondary,
+      opacity: 0.7,
+    },
+    rowWrap: {
+      marginHorizontal: SPACING.screen,
     },
     searchWrap: {
       paddingHorizontal: SPACING.screen,
@@ -406,12 +351,12 @@ const createStyles = (colors) =>
     banner: {
       flexDirection: "row",
       alignItems: "center",
-      marginHorizontal: GRID_GUTTER,
-      marginBottom: GRID_GAP,
+      marginHorizontal: SPACING.screen,
+      marginTop: 6,
       paddingHorizontal: 14,
       paddingVertical: 10,
       backgroundColor: colors.surface,
-      borderRadius: RADIUS.tile + 4,
+      borderRadius: RADIUS.tile,
       borderWidth: 1,
       borderColor: colors.border,
     },
