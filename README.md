@@ -188,7 +188,8 @@ everything from both, restore the server's copy, or replace it with its own. A
 device that has lost its items, or had to recover a damaged list, asks before
 sending anything, and so does one whose merge would remove most of its items. Every
 write also keeps the copy it replaced: the last 20 in `history/`, and the first one
-of each day for 60 days in `daily/`.
+of each day for 60 days in `daily/`. Each user's photos stop at 5,000 files and
+1 GB; a photo past that isn't taken, and its item syncs without it.
 
 ```bash
 python3 -m unittest server/test_xrnhome_sync.py    # needs bcrypt

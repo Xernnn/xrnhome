@@ -21,7 +21,8 @@ sync password.
                               412 if the copy here isn't the one the device last saw.
                               X-Write-Id: an id the device picked for this write (optional)
     GET  /photos              the names of the photos kept here, as a JSON list
-    PUT  /photos/<name>       a photo's bytes
+    PUT  /photos/<name>       a photo's bytes; 507 once the user's photos would pass MAX_PHOTOS
+                              or MAX_PHOTOS_BYTES
     GET  /photos/<name>       a photo
     GET  /health              200 "ok", no login (for monitoring)
     GET  /update/<file>       releases from scripts/release.mjs, in <data>/update: app.json and
@@ -59,6 +60,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 MAX_BODY = 8 * 1024 * 1024
 MAX_PHOTO = 15 * 1024 * 1024
+# One user's photos, all told. Each copy of the items is capped (MAX_BODY, and only so many are
+# kept), but photos weren't: a client could fill the disk every other service on the phone shares.
+MAX_PHOTOS = 5000
+MAX_PHOTOS_BYTES = 1024 * 1024 * 1024
 FAIL_DELAY_S = 2  # after a wrong password, as Radicale does
 MAX_HELD = 8  # wrong logins held for FAIL_DELAY_S at once; any more are answered at once
 AUTH_CACHE_S = 600  # a bcrypt check costs ~0.3s on a phone; don't pay it per request
@@ -392,6 +397,24 @@ def prune_photos(user, force=False):
                 pass
 
 
+def photos_in_use(folder, replacing):
+    """(how many, bytes) of the photos in `folder`, apart from `replacing`, which an upload is
+    about to take the place of. Uploads still on their way (dot files) don't count."""
+    count = size = 0
+    try:
+        with os.scandir(folder) as entries:
+            for e in entries:
+                if e.name != replacing and PHOTO_NAME.fullmatch(e.name):
+                    try:
+                        size += e.stat().st_size
+                        count += 1
+                    except OSError:
+                        pass
+    except OSError:
+        pass
+    return count, size
+
+
 def etag_version(header):
     return (header or "").strip().removeprefix("W/").strip('"')
 
@@ -600,6 +623,9 @@ class Handler(BaseHTTPRequestHandler):
         if length is None:
             return
         folder = user_dir(user, "photos")
+        count, size = photos_in_use(folder, name)
+        if count >= MAX_PHOTOS or size + length > MAX_PHOTOS_BYTES:
+            return self.send(507, "no room for more photos")
         os.makedirs(folder, exist_ok=True)
         tmp = os.path.join(folder, f".{name}.{threading.get_ident()}.part")
         left = length

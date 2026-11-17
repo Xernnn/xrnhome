@@ -1,6 +1,6 @@
 import * as FileSystem from "expo-file-system/legacy";
 
-import { itemsHash, snapshot, withLocalPhotos } from "../src/utils/sync";
+import { itemsHash, pushItems, snapshot, withLocalPhotos } from "../src/utils/sync";
 
 jest.mock("expo-secure-store", () => ({}));
 jest.mock("@react-native-async-storage/async-storage", () =>
@@ -15,6 +15,8 @@ jest.mock("expo-file-system/legacy", () => ({
   downloadAsync: jest.fn(),
   moveAsync: jest.fn(async () => {}),
   deleteAsync: jest.fn(async () => {}),
+  uploadAsync: jest.fn(),
+  FileSystemUploadType: { BINARY_CONTENT: 0 },
 }));
 
 const server = { url: "https://example.test/xrnhome", user: "u", password: "p" };
@@ -95,5 +97,25 @@ describe("what goes to the server", () => {
     expect(itemsHash([], [])).not.toBe(
       itemsHash([], [{ label: "Baby", room: "household" }])
     );
+  });
+});
+
+describe("sending the items", () => {
+  it("still sends them when the server has no room left for a photo", async () => {
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+    FileSystem.getInfoAsync.mockResolvedValue({ exists: true });
+    FileSystem.uploadAsync.mockResolvedValue({ status: 507 });
+    const sent = [];
+    global.fetch = jest.fn(async (url, { method = "GET", body } = {}) => {
+      if (url.endsWith("/photos")) {
+        return { status: 200, ok: true, json: async () => [] };
+      }
+      sent.push([method, JSON.parse(body)]);
+      return { status: 200, ok: true, headers: { get: () => '"5"' } };
+    });
+    const mine = [{ id: "1", name: "A", imageUri: "file:///docs/xrnhome_images/a.jpg" }];
+    const result = await pushItems(server, mine, 4, [], "w1");
+    expect(result.version).toBe(5);
+    expect(sent.map(([method, doc]) => [method, doc.items[0].photo])).toEqual([["PUT", "a.jpg"]]);
   });
 });

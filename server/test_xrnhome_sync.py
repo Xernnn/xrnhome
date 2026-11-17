@@ -197,6 +197,25 @@ class SyncServerTest(unittest.TestCase):
         self.assertEqual((200, jpeg, "image/jpeg"), (status, body, headers["Content-Type"]))
         self.assertEqual(404, self.call("GET", "/photos/nope.jpg")[0])
 
+    def test_one_users_photos_stop_at_their_cap(self):
+        # Every photo up to 15 MB, as many as were sent, kept at least 60 days: a client (or a
+        # stolen login) could fill the disk every other service on the phone shares.
+        count, size = srv.MAX_PHOTOS, srv.MAX_PHOTOS_BYTES
+        srv.MAX_PHOTOS, srv.MAX_PHOTOS_BYTES = 3, 250
+        try:
+            put = lambda name, n: self.call("PUT", f"/photos/{name}", b"x" * n, raw=True)[0]
+            self.assertEqual([201, 201], [put("a.jpg", 100), put("b.jpg", 100)])
+            self.assertEqual(507, put("c.jpg", 100))  # 300 bytes
+            self.assertEqual(201, put("b.jpg", 150))  # in b's place: 250
+            self.assertEqual(507, put("c.jpg", 1))
+            self.assertEqual(201, put("a.jpg", 50))  # in a's place: 200
+            self.assertEqual(201, put("c.jpg", 50))  # 250
+            srv.MAX_PHOTOS_BYTES = 10000
+            self.assertEqual(507, put("d.jpg", 1))  # a fourth photo
+            self.assertEqual(["a.jpg", "b.jpg", "c.jpg"], json.loads(self.call("GET", "/photos")[1]))
+        finally:
+            srv.MAX_PHOTOS, srv.MAX_PHOTOS_BYTES = count, size
+
     def test_photo_names_stay_in_their_folder(self):
         for name in ("..%2Fusers", ".hidden.jpg", "a/b.jpg", "a..b.jpg"):
             self.assertIn(self.call("PUT", f"/photos/{name}", b"x", raw=True)[0], (400, 404), name)
