@@ -2,6 +2,7 @@ import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 import * as DocumentPicker from "expo-document-picker";
 import { CURRENT_SCHEMA_VERSION } from "./storage";
+import { importedImageUri } from "./images";
 
 const BACKUP_VERSION = 3;
 
@@ -55,11 +56,16 @@ export const importData = async () => {
 
   const content = await FileSystem.readAsStringAsync(asset.uri);
   const parsed = JSON.parse(content);
-  const items = Array.isArray(parsed) ? parsed : parsed.items;
+  const listed = Array.isArray(parsed) ? parsed : parsed.items;
 
-  if (!Array.isArray(items)) {
+  if (!Array.isArray(listed)) {
     throw new Error("This file doesn't look like an xrnhome backup.");
   }
+  const items = listed.map((item) =>
+    item && typeof item === "object" && !Array.isArray(item)
+      ? { ...item, imageUri: importedImageUri(item.imageUri) }
+      : item
+  );
   const schemaVersion =
     !Array.isArray(parsed) && Number.isFinite(parsed.schemaVersion)
       ? parsed.schemaVersion

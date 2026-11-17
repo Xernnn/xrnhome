@@ -124,12 +124,20 @@ const mergedOpenedPercent = (a, b) => {
 // Photos are files the app copied (file://), what the picker hands back on
 // Android (content://) and web (data:, blob:), or, in the browser, a photo on the
 // home server that served the page. Anything else, a web address in an imported
-// backup above all, would have the app fetch it: keep it out.
-const safeImageUri = (uri) =>
-  typeof uri === "string" &&
-  /^(file|content|blob):|^data:image\/|^\/xrnhome\/photos\/[A-Za-z0-9]/i.test(uri)
+// backup above all, would have the app fetch it: keep it out. So is a file or
+// a server photo whose path climbs out of where it starts ("..", written out or
+// %-encoded).
+const safeImageUri = (uri) => {
+  if (typeof uri !== "string") {
+    return null;
+  }
+  if (/^(content|blob):|^data:image\//i.test(uri)) {
+    return uri;
+  }
+  return /^file:|^\/xrnhome\/photos\/[A-Za-z0-9]/i.test(uri) && !/\.\.|%2e|%2f|%5c|\\/i.test(uri)
     ? uri
     : null;
+};
 
 // History entries are shown as text: an entry from a damaged or hand-made
 // backup whose action isn't a string would crash the detail screen.

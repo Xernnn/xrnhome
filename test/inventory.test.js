@@ -140,6 +140,24 @@ describe("counting", () => {
   });
 });
 
+describe("a stored photo path", () => {
+  it.each([
+    "file:///docs/xrnhome_images/../../databases/RKStorage",
+    "file:///docs/xrnhome_images/%2E%2E/x.jpg",
+    "/xrnhome/photos/a/../../state",
+  ])("that climbs out of its folder is dropped: %s", (imageUri) => {
+    expect(make({ imageUri }).imageUri).toBeNull();
+  });
+
+  it.each([
+    "file:///docs/xrnhome_images/1731-abc.jpg",
+    "content://com.android.providers.media.documents/document/image%3A12",
+    "/xrnhome/photos/1731-abc.jpg",
+  ])("that stays put is kept: %s", (imageUri) => {
+    expect(make({ imageUri }).imageUri).toBe(imageUri);
+  });
+});
+
 describe("restock rule", () => {
   const sauce = () =>
     make({

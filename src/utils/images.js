@@ -39,10 +39,22 @@ const ensureDir = async () => {
   }
 };
 
+// A photo file of ours: one plain name straight inside our folder. A prefix
+// alone would let ".../xrnhome_images/../../databases/RKStorage" (from a backup
+// file made to do it) count as ours, to be deleted with its item and uploaded
+// as a photo.
 export const isPersistedImage = (uri) =>
-  !!uri &&
+  typeof uri === "string" &&
   !!IMAGE_DIR &&
-  (uri.startsWith(IMAGE_DIR) || uri.startsWith(LEGACY_IMAGE_DIR));
+  [IMAGE_DIR, LEGACY_IMAGE_DIR].some(
+    (dir) => !!dir && uri.startsWith(dir) && isSafePhotoName(uri.slice(dir.length))
+  );
+
+// An imported backup's photo path, if it's one of ours: anything else on the
+// phone isn't the backup's to point at. Other kinds of address are left to
+// normalizeItem.
+export const importedImageUri = (uri) =>
+  typeof uri === "string" && /^file:/i.test(uri) && !isPersistedImage(uri) ? null : uri;
 
 // The picked image's size. Asked for with callbacks, which every platform takes:
 // in the browser Image.getSize returns nothing to wait for, and calls its

@@ -2,7 +2,13 @@ import { Image } from "react-native";
 import * as FileSystem from "expo-file-system/legacy";
 import * as ImageManipulator from "expo-image-manipulator";
 
-import { persistImage } from "../src/utils/images";
+import {
+  deleteImage,
+  importedImageUri,
+  isPersistedImage,
+  persistImage,
+  photoFileName,
+} from "../src/utils/images";
 
 jest.mock("expo-secure-store", () => ({}));
 jest.mock("expo-file-system/legacy", () => ({
@@ -10,6 +16,7 @@ jest.mock("expo-file-system/legacy", () => ({
   getInfoAsync: jest.fn(async () => ({ exists: true })),
   makeDirectoryAsync: jest.fn(async () => {}),
   copyAsync: jest.fn(async () => {}),
+  deleteAsync: jest.fn(async () => {}),
 }));
 jest.mock("expo-image-manipulator", () => ({
   manipulateAsync: jest.fn(async () => ({ uri: "file:///cache/smaller.jpg" })),
@@ -67,5 +74,38 @@ describe("a picked photo", () => {
     await persistImage("file:///cache/odd.heic");
     expect(ImageManipulator.manipulateAsync).not.toHaveBeenCalled();
     expect(FileSystem.copyAsync.mock.calls[0][0].from).toBe("file:///cache/odd.heic");
+  });
+});
+
+describe("a photo path from a backup file", () => {
+  const climbing = [
+    "file:///docs/xrnhome_images/../../databases/RKStorage",
+    "file:///docs/xrnhome_images/%2e%2e/%2e%2e/databases/RKStorage",
+    "file:///docs/xrnhome_images/sub/a.jpg",
+    "file:///docs/pantrypal_images/../xrnhome_images/a.jpg",
+  ];
+
+  it.each(climbing)("isn't ours when it leaves our folder: %s", async (uri) => {
+    expect(isPersistedImage(uri)).toBe(false);
+    expect(photoFileName(uri)).toBeNull();
+    await deleteImage(uri);
+    expect(FileSystem.deleteAsync).not.toHaveBeenCalled();
+    expect(importedImageUri(uri)).toBeNull();
+  });
+
+  it("is kept when it's a photo straight inside our folder", async () => {
+    const ours = "file:///docs/xrnhome_images/1731-abc.jpg";
+    expect(photoFileName(ours)).toBe("1731-abc.jpg");
+    expect(importedImageUri(ours)).toBe(ours);
+    await deleteImage(ours);
+    expect(FileSystem.deleteAsync).toHaveBeenCalledWith(ours, { idempotent: true });
+  });
+
+  it("is dropped when it names any other file on the phone", () => {
+    expect(importedImageUri("file:///docs/notes.jpg")).toBeNull();
+    expect(importedImageUri("file:///data/somewhere/else.jpg")).toBeNull();
+    expect(importedImageUri("content://media/external/images/1")).toBe(
+      "content://media/external/images/1"
+    );
   });
 });
