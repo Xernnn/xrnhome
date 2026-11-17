@@ -58,7 +58,13 @@ export default function EditItemScreen({ navigation, route }) {
       return;
     }
     // Only what was changed here goes onto the item as it is now (formChanges).
-    const current = getItemById(itemId) || existing;
+    // Gone meanwhile (a sync took it away), there's nothing to save it onto; the
+    // form stays, with what was typed.
+    const current = getItemById(itemId);
+    if (!current) {
+      Alert.alert("Item not found");
+      return false;
+    }
     const changes = formChanges(started, values, current);
     const fields = { ...current, ...changes };
 

@@ -416,6 +416,42 @@ describe("the Edit form", () => {
   });
 });
 
+describe("the Edit form of an item a sync took away", () => {
+  it("says so on Save instead of closing as if it had saved", async () => {
+    await launch();
+    await add("Bread");
+    await add("Milk");
+    await wait(16000);
+    const navigation = {
+      goBack: jest.fn(),
+      navigate: jest.fn(),
+      popToTop: jest.fn(),
+      dispatch: jest.fn(),
+      addListener: jest.fn(() => () => {}),
+    };
+    const itemId = app.inventory.items.find((item) => item.name === "Milk").id;
+    await act(async () => {
+      showScreen(<EditItemScreen navigation={navigation} route={{ params: { itemId } }} />);
+    });
+    // The laptop deletes Milk, and that comes down while the form is open.
+    server.doc = { ...server.doc, items: server.doc.items.filter((item) => item.id !== itemId) };
+    server.version += 1;
+    await wait(31000);
+    expect(app.inventory.items.map((item) => item.name)).toEqual(["Bread"]);
+
+    const note = renderer.root.findByProps({ accessibilityLabel: "Note" });
+    await act(async () => note.props.onChangeText("top shelf"));
+    const [save] = renderer.root.findAll(
+      (node) => node.props.label === "Save" && typeof node.props.onPress === "function"
+    );
+    await act(async () => {
+      await save.props.onPress();
+    });
+    expect(Alert.alert).toHaveBeenCalledWith("Item not found");
+    expect(navigation.goBack).not.toHaveBeenCalled();
+  });
+});
+
 describe("leaving the app", () => {
   // Jest runs as iOS, which like the laptop isn't Android.
   it("sends a change that was waiting straight away, on any platform", async () => {
