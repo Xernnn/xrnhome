@@ -90,19 +90,13 @@ export const SPACING = {
 // xrnrule bundles. MiSans draws heavier than its weight names, so (as in
 // xrnrule) each style asks for one step lighter than it looks. Geist Mono (OFL,
 // assets/fonts) is for the wordmark and the big numbers.
-// On a card in its pack's colour, in both themes. packShade keeps every card dark
-// enough for PACK_INK; PACK_OUT is the card of something that has run out.
-export const PACK_INK = "#FFFFFF";
-export const PACK_BUTTON_INK = "#1B1B1E";
-export const PACK_OUT = "#4B4B52";
-
 export const FONTS = {
   mono: "GeistMono-Bold",
   monoMedium: "GeistMono-Medium",
 };
 
 export const TYPE = {
-  pageTitle: { fontSize: 23, fontWeight: "700", letterSpacing: -0.2 },
+  pageTitle: { fontSize: 28, fontWeight: "700", letterSpacing: -0.4 },
   bigName: { fontSize: 24, fontWeight: "800" },
   barTitle: { fontSize: 18, fontWeight: "400" },
   title: { fontSize: 17, fontWeight: "600" },
@@ -380,6 +374,27 @@ export const stockText = (item) => {
     return `last one at ${item.openedPercent}%`;
   }
   return `${countText(item.quantity, item.unit)} left`;
+};
+
+// What a row in a list says under an item's name: only what needs noticing, as
+// [{ text, tone }], tone being "danger", "warning", "accent" or "muted". An item
+// with nothing to notice has an empty line, and its row is one line high.
+export const rowStatus = (item) => {
+  const parts = [];
+  if (item.quantity <= 0) {
+    parts.push({ text: "Ran out", tone: "muted" });
+  } else {
+    const expiry = getExpiryStatus(item);
+    if (expiry === "expired") {
+      parts.push({ text: "Expired", tone: "danger" });
+    } else if (expiry === "soon") {
+      parts.push({ text: getExpiryLabel(item), tone: "warning" });
+    }
+  }
+  if (isOnBuyList(item)) {
+    parts.push({ text: "On the list", tone: "accent" });
+  }
+  return parts;
 };
 
 // Rounds a value to the nearest OPENED_STEP and clamps it to 0..100.

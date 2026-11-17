@@ -9,13 +9,7 @@ import {
 } from "react-native";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useTheme } from "../context/ThemeContext";
-import {
-  FONTS,
-  MAX_QUANTITY,
-  PACK_BUTTON_INK,
-  PACK_INK,
-  hexToRgba,
-} from "../utils/constants";
+import { FONTS, MAX_QUANTITY } from "../utils/constants";
 
 const REPEAT_MS = 90;
 
@@ -30,7 +24,6 @@ function StepButton({
   disabled,
   label,
   styles,
-  look,
   iconColor,
 }) {
   const press = useRef(onPress);
@@ -63,7 +56,6 @@ function StepButton({
       hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
       style={[
         styles.button,
-        look,
         { width: size, height: size, borderRadius: size / 2 },
         disabled && styles.buttonDisabled,
       ]}
@@ -76,8 +68,7 @@ function StepButton({
 }
 
 // − something + with round grey buttons. The one stepper in the app: whatever
-// sits between the buttons is the caller's. `onPack` is for a card in its pack's
-// colour, where + is the strong one.
+// sits between the buttons is the caller's.
 export function Stepper({
   children,
   onMinus,
@@ -89,7 +80,6 @@ export function Stepper({
   plusLabel = "More",
   repeat = false,
   size = 38,
-  onPack = false,
   style,
 }) {
   const { colors } = useTheme();
@@ -104,13 +94,12 @@ export function Stepper({
         disabled={minusDisabled}
         label={minusLabel}
         styles={styles}
-        look={onPack ? styles.packMinus : null}
-        iconColor={onPack ? PACK_INK : colors.textPrimary}
+        iconColor={colors.textPrimary}
       />
       {children != null ? (
         <View style={styles.valueWrap}>{children}</View>
       ) : (
-        <View style={onPack ? styles.packGap : styles.gap} />
+        <View style={styles.gap} />
       )}
       <StepButton
         icon="plus"
@@ -121,8 +110,7 @@ export function Stepper({
         disabled={plusDisabled}
         label={plusLabel}
         styles={styles}
-        look={onPack ? styles.packPlus : null}
-        iconColor={onPack ? PACK_BUTTON_INK : colors.textPrimary}
+        iconColor={colors.textPrimary}
       />
     </View>
   );
@@ -211,15 +199,6 @@ const createStyles = (colors) =>
     },
     buttonDisabled: {
       opacity: 0.4,
-    },
-    packMinus: {
-      backgroundColor: hexToRgba(PACK_INK, 0.2),
-    },
-    packPlus: {
-      backgroundColor: PACK_INK,
-    },
-    packGap: {
-      width: 6,
     },
     valueWrap: {
       flexGrow: 1,

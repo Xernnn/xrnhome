@@ -475,7 +475,7 @@ export default function ItemForm({
             ))}
           </Card>
 
-          <FormSection icon="shape-outline" title="What is it?">
+          <FormSection title="What is it?">
             <Segmented options={ROOM_OPTIONS} value={room} onChange={changeRoom} />
             <View style={styles.chips}>
               {getRoomCategories(room).map((cat) => {
@@ -538,7 +538,7 @@ export default function ItemForm({
             ) : null}
           </FormSection>
 
-          <FormSection icon="counter" title="How many do you have?">
+          <FormSection title="How many do you have?">
             <View style={styles.unitsRow}>
               <QuantityControl
                 value={quantity}
@@ -610,7 +610,7 @@ export default function ItemForm({
             ) : null}
           </FormSection>
 
-          <FormSection icon="cart-outline" title="When should it go on the shopping list?">
+          <FormSection title="When should it go on the shopping list?">
             <View style={styles.linesFirst}>
               {switchLine(
                 "When it's running low",
@@ -672,7 +672,7 @@ export default function ItemForm({
             </Text>
           </FormSection>
 
-          <FormSection icon="calendar-clock" title="Does it expire?">
+          <FormSection title="Does it expire?">
             <View style={styles.linesFirst}>
               {switchLine("Expiry date", expiryEnabled, toggleExpiry, null, true)}
             </View>
@@ -712,7 +712,7 @@ export default function ItemForm({
             ) : null}
           </FormSection>
 
-          <FormSection icon="note-text-outline" title="Anything to remember?">
+          <FormSection title="Anything to remember?">
             <TextInput
               style={styles.noteInput}
               value={note}

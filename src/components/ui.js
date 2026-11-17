@@ -40,19 +40,12 @@ export function Card({ children, style, padding = SPACING.card }) {
   return <View style={[styles.card, { padding }, style]}>{children}</View>;
 }
 
-// One of a form's cards: a grey icon and a question over its content.
-export function FormSection({ icon, title, children, style }) {
-  const { colors, styles } = useStyles();
+// One of a form's cards: a question over its content.
+export function FormSection({ title, children, style }) {
+  const { styles } = useStyles();
   return (
     <Card style={[styles.formSection, style]}>
-      <View style={styles.questionRow}>
-        <MaterialCommunityIcons
-          name={icon}
-          size={18}
-          color={colors.textSecondary}
-        />
-        <Text style={styles.question}>{title}</Text>
-      </View>
+      <Text style={styles.question}>{title}</Text>
       <View style={styles.formSectionBody}>{children}</View>
     </Card>
   );
@@ -228,7 +221,7 @@ export function FootNote({ children, style }) {
   return <Text style={[styles.footNote, style]}>{children}</Text>;
 }
 
-// The big lowercase page title ("food", "settings") with actions on the right.
+// The big page title ("Food", "Settings") with actions on the right.
 export function PageTitle({ title, subtitle, actions }) {
   const { styles } = useStyles();
   return (
@@ -666,15 +659,9 @@ const createStyles = (colors) =>
     formSection: {
       marginTop: 14,
     },
-    questionRow: {
-      flexDirection: "row",
-      alignItems: "center",
-    },
     question: {
       ...TYPE.question,
       color: colors.textSecondary,
-      marginLeft: 12,
-      flex: 1,
     },
     formSectionBody: {
       marginTop: 14,

@@ -13,13 +13,13 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useInventory } from "../context/InventoryContext";
 import { useTheme } from "../context/ThemeContext";
 import EmptyState from "../components/EmptyState";
-import PackPhoto from "../components/PackPhoto";
 import { Stepper } from "../components/QuantityControl";
 import {
   FormSection,
   GroupCard,
   GroupRow,
   Hairline,
+  ItemThumb,
   OutlinePill,
   PillButton,
   RoundIconButton,
@@ -30,12 +30,9 @@ import {
 } from "../components/ui";
 import { haptics } from "../utils/haptics";
 import { pickDate } from "../utils/datePicker";
-import { usePackShade } from "../utils/packColourCache";
 import {
   FONTS,
   OPENED_STEP,
-  PACK_INK,
-  PACK_OUT,
   RADIUS,
   SPACING,
   TYPE,
@@ -46,10 +43,8 @@ import {
   getExpiryStatus,
   getRestockRule,
   getRoomMeta,
-  hexToRgba,
   isOnBuyList,
   isTrackingOpened,
-  mixHex,
   needsExpiryDate,
   unitFor,
 } from "../utils/constants";
@@ -69,16 +64,17 @@ const formatDate = (iso) => {
   }
 };
 
-// The top of the page: the item's card, at full size.
-function PackHero({ item, where }) {
+// The top of the page: the item's picture beside its name and where it lives.
+function Header({ item, where }) {
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
-  const shade = usePackShade(item);
   return (
-    <View style={[styles.hero, { backgroundColor: item.quantity > 0 ? shade : PACK_OUT }]}>
-      <PackPhoto item={item} style={styles.heroPhoto} />
-      <Text style={styles.name}>{item.name}</Text>
-      <Text style={styles.where}>{where}</Text>
+    <View style={styles.header}>
+      <ItemThumb item={item} size={64} radius={18} iconSize={30} />
+      <View style={styles.headerText}>
+        <Text style={styles.name}>{item.name}</Text>
+        <Text style={styles.where}>{where}</Text>
+      </View>
     </View>
   );
 }
@@ -187,37 +183,16 @@ export default function ItemDetailScreen({ navigation, route }) {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        <PackHero item={item} where={`${item.category} · ${room.label}`} />
+        <Header item={item} where={`${item.category} · ${room.label}`} />
 
         {item.expiryDate ? (
-          <View
-            style={[
-              styles.expiryBanner,
-              {
-                backgroundColor: mixHex(expiryColor, colors.background, 0.12),
-                borderColor: mixHex(expiryColor, colors.background, 0.4),
-              },
-            ]}
-          >
-            <MaterialCommunityIcons
-              name={
-                expiryStatus === "expired"
-                  ? "alert-circle"
-                  : expiryStatus === "soon"
-                  ? "clock-alert-outline"
-                  : "calendar-check-outline"
-              }
-              size={20}
-              color={expiryColor}
-            />
-            <View style={styles.expiryTextWrap}>
-              <Text style={[styles.expiryStatusText, { color: expiryColor }]}>
-                {getExpiryLabel(item)}
-              </Text>
-              <Text style={styles.expiryDateText}>
-                {formatExpiryDate(item.expiryDate)}
-              </Text>
-            </View>
+          <View style={styles.expiryRow}>
+            <Text style={[styles.expiryStatusText, { color: expiryColor }]}>
+              {getExpiryLabel(item)}
+            </Text>
+            <Text style={styles.expiryDateText}>
+              {formatExpiryDate(item.expiryDate)}
+            </Text>
           </View>
         ) : null}
 
@@ -235,7 +210,7 @@ export default function ItemDetailScreen({ navigation, route }) {
           </View>
         ) : null}
 
-        <FormSection icon="counter" title="How much is left?">
+        <FormSection title="How much is left?">
           <View style={styles.stockRow}>
             <View style={styles.stockCell}>
               <Text style={styles.stockValue}>{item.quantity}</Text>
@@ -315,7 +290,7 @@ export default function ItemDetailScreen({ navigation, route }) {
         </GroupCard>
 
         {item.note && item.note.trim().length > 0 ? (
-          <FormSection icon="note-text-outline" title="Note">
+          <FormSection title="Note">
             <Text style={styles.noteText}>{item.note}</Text>
           </FormSection>
         ) : null}
@@ -355,47 +330,44 @@ const createStyles = (colors) =>
       paddingHorizontal: SPACING.screen,
       paddingTop: 4,
     },
-    hero: {
-      padding: 10,
-      paddingBottom: 16,
-      borderRadius: RADIUS.card + 4,
-    },
-    heroPhoto: {
-      maxWidth: 340,
-      alignSelf: "center",
-    },
-    name: {
-      ...TYPE.pageTitle,
-      marginTop: 12,
-      paddingHorizontal: 8,
-      color: PACK_INK,
-    },
-    where: {
-      ...TYPE.caption,
-      marginTop: 2,
-      paddingHorizontal: 8,
-      color: hexToRgba(PACK_INK, 0.85),
-    },
-    expiryBanner: {
+    header: {
       flexDirection: "row",
       alignItems: "center",
+      paddingTop: 4,
+      paddingBottom: 6,
+    },
+    headerText: {
+      flex: 1,
+      marginLeft: 16,
+    },
+    name: {
+      ...TYPE.bigName,
+      color: colors.textPrimary,
+    },
+    where: {
+      ...TYPE.bodySmall,
+      marginTop: 2,
+      color: colors.textSecondary,
+    },
+    expiryRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      backgroundColor: colors.surface,
       borderRadius: RADIUS.card,
       borderWidth: 1,
+      borderColor: colors.border,
       paddingHorizontal: SPACING.card,
-      paddingVertical: 14,
+      paddingVertical: 16,
       marginTop: 14,
     },
-    expiryTextWrap: {
-      marginLeft: 12,
-      flex: 1,
-    },
     expiryStatusText: {
-      ...TYPE.button,
+      ...TYPE.body,
+      fontWeight: "600",
     },
     expiryDateText: {
-      ...TYPE.caption,
+      ...TYPE.bodySmall,
       color: colors.textSecondary,
-      marginTop: 2,
     },
     stockRow: {
       flexDirection: "row",

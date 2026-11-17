@@ -19,7 +19,6 @@ const RECOVERED_KEY = "xrnhome_items_recovered";
 const CATEGORIES_KEY = "xrnhome_categories";
 const CART_KEY = "xrnhome_cart";
 const REMINDERS_KEY = "xrnhome_reminders";
-const PACK_COLOURS_KEY = "xrnhome_pack_colours";
 export const THEME_KEY = "xrnhome_theme_mode";
 
 // The app used to be called PantryPal. Whatever it saved under the old keys
@@ -213,10 +212,6 @@ const writeJson = async (key, value) => {
 
 export const loadCategories = () => readJson(CATEGORIES_KEY, []);
 export const saveCategories = (list) => writeJson(CATEGORIES_KEY, list);
-
-// { photo file name: colour found in it, or null }, see packColourCache.js.
-export const loadPackColours = () => readJson(PACK_COLOURS_KEY, {});
-export const savePackColours = (colours) => writeJson(PACK_COLOURS_KEY, colours);
 
 // { at, entries: { itemId: { count, before } } }, the trip in progress.
 export const loadCart = () => readJson(CART_KEY, null);

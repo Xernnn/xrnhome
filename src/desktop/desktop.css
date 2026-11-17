@@ -259,25 +259,6 @@
   flex-direction: column;
 }
 
-/* The card, at a pointer's pace. TouchableOpacity sets its own transition. */
-.dk [data-card] {
-  transition: transform 0.16s cubic-bezier(0.3, 1.4, 0.5, 1), opacity 0.15s !important;
-}
-.dk [data-card]:hover {
-  transform: translateY(-4px) rotate(-0.6deg);
-}
-.dk [data-cart] {
-  opacity: 0;
-  transition: opacity 0.12s, transform 0.12s;
-}
-.dk [data-card]:hover [data-cart],
-.dk [data-cart]:focus-visible {
-  opacity: 1;
-}
-[data-level] {
-  transition: height 0.25s, top 0.25s;
-}
-
 .dk-toast {
   position: fixed;
   left: 50%;
@@ -286,14 +267,4 @@
   height: 0;
   margin-left: -230px;
   z-index: 20;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .dk [data-card],
-  [data-level] {
-    transition: none !important;
-  }
-  .dk [data-card]:hover {
-    transform: none;
-  }
 }
