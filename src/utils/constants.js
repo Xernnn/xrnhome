@@ -376,27 +376,6 @@ export const stockText = (item) => {
   return `${countText(item.quantity, item.unit)} left`;
 };
 
-// What a row in a list says under an item's name: only what needs noticing, as
-// [{ text, tone }], tone being "danger", "warning", "accent" or "muted". An item
-// with nothing to notice has an empty line, and its row is one line high.
-export const rowStatus = (item) => {
-  const parts = [];
-  if (item.quantity <= 0) {
-    parts.push({ text: "Ran out", tone: "muted" });
-  } else {
-    const expiry = getExpiryStatus(item);
-    if (expiry === "expired") {
-      parts.push({ text: "Expired", tone: "danger" });
-    } else if (expiry === "soon") {
-      parts.push({ text: getExpiryLabel(item), tone: "warning" });
-    }
-  }
-  if (isOnBuyList(item)) {
-    parts.push({ text: "On the list", tone: "accent" });
-  }
-  return parts;
-};
-
 // Rounds a value to the nearest OPENED_STEP and clamps it to 0..100.
 export const roundPercent = (value) => {
   if (typeof value !== "number" || Number.isNaN(value)) {
