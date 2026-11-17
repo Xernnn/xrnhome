@@ -3,23 +3,26 @@
 //   node scripts/release.mjs          the phone app
 //   node scripts/release.mjs --web    the laptop version
 //
-// The phone only takes a build newer than the one it has, so when the server already has
-// app.json's android.versionCode (or a later one), it's bumped first. Then the native project is
+// Either is only made from master with nothing left uncommitted (--force makes one anyway): what's
+// built is what the folder holds. The phone only takes a build newer than the one it has, so when
+// the server already has app.json's android.versionCode (or a later one), it's bumped first; bump
+// it in a commit of its own beforehand to keep the tree clean. Then the native project is
 // regenerated (expo prebuild, android/ is not in git), Gradle builds the release APK, and it goes
 // up with an app.json that names it. The installed app looks every few hours, or at once from
 // Settings → Check for updates.
 //
 // Reads ~/.config/xrnhome/release.json:
 //   { "server": "https://<host>/xrnhome", "ssh": ["<ssh-host>", "<another way in>"],
-//     "signer": "<SHA-256 of the signing certificate, optional>" }
+//     "signer": "<SHA-256 of the installed app's signing certificate>" }
 // and uses the first ssh host that answers. The address never enters the repo. Android installs
-// an update only if it's signed with the same key as the installed app; with "signer" set, a
-// build signed any other way stops here instead of failing on the phone.
+// an update only if it's signed with the same key as the installed app, so a build signed any
+// other way, or whose signer can't be read, stops here instead of failing on the phone.
 import { readFileSync, writeFileSync, existsSync, readdirSync, rmSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import { execFileSync, spawnSync } from "child_process";
 import { createHash } from "crypto";
+import guard from "./release-guard.js";
 
 const ROOT = new URL("..", import.meta.url).pathname;
 const APP_JSON = join(ROOT, "app.json");
@@ -30,6 +33,17 @@ const CONFIG = join(homedir(), ".config", "xrnhome", "release.json");
 const REMOTE_DIR = "xrnhome-sync/data/update"; // the sync server's --data, from the ssh login's home
 const WEB_DIR = "xrnhome-sync/data/web";
 const WEB_BUILD = join(ROOT, "dist");
+
+const flags = process.argv.slice(2);
+if (flags.some((flag) => flag !== "--web" && flag !== "--force")) {
+  console.error("usage: node scripts/release.mjs [--web] [--force]");
+  process.exit(2);
+}
+const refusals = guard.treeRefusals(ROOT);
+if (refusals.length && !flags.includes("--force")) {
+  console.error(`Not released: ${refusals.join("\n")}\n(--force releases this tree anyway)`);
+  process.exit(1);
+}
 
 const { server, host, signer } = readConfig();
 const ssh = (command, input) =>
@@ -43,10 +57,11 @@ const put = (name, data) =>
   ssh(`cat > ${REMOTE_DIR}/${name}.part && mv ${REMOTE_DIR}/${name}.part ${REMOTE_DIR}/${name}`, data);
 ssh(`mkdir -p ${REMOTE_DIR}`);
 
-if (process.argv.includes("--web")) {
+if (flags.includes("--web")) {
   publishWeb();
   process.exit(0);
 }
+const pinned = guard.pinnedSigner({ signer }, CONFIG);
 
 // app.json needs the login over https; ssh doesn't.
 const liveText = ssh(`cat ${REMOTE_DIR}/app.json 2>/dev/null || true`).toString().trim();
@@ -79,13 +94,7 @@ if (built.versionCode !== versionCode) {
 const apkPath = join(APK_DIR, built.outputFile);
 const apk = readFileSync(apkPath);
 const cert = signerOf(apkPath);
-// Unchecked is as bad as wrong: a build signed with another key reaches the server, and the phone refuses it.
-if (signer && !cert) {
-  throw new Error("can't read the APK's signer to check it against release.json's: set ANDROID_HOME to the Android SDK");
-}
-if (signer && cert !== signer.toLowerCase().replace(/:/g, "")) {
-  throw new Error(`the APK is signed by ${cert}, not the installed app's ${signer}: the phone would refuse it`);
-}
+guard.checkSigner(cert, pinned);
 const name = `xrnhome-${versionCode}.apk`;
 const info = {
   versionCode,
@@ -96,7 +105,7 @@ const info = {
   md5: createHash("md5").update(apk).digest("hex"),
 };
 console.log(`${name}: ${(apk.length / 1048576).toFixed(1)} MB, version ${built.versionName} (${versionCode})`);
-if (cert) console.log(`signed by ${cert}`);
+console.log(`signed by ${cert}`);
 
 // The APK first and app.json last, so the phone never hears of a file that isn't there.
 put(name, apk);
@@ -130,8 +139,9 @@ function publishWeb() {
 
 function readConfig() {
   if (!existsSync(CONFIG)) {
-    console.error(`No ${CONFIG}. Create it with the sync server's public address and its ssh host:
-  { "server": "https://<host>/xrnhome", "ssh": ["<ssh-host>"] }`);
+    console.error(`No ${CONFIG}. Create it with the sync server's public address, its ssh host and the
+installed app's signing certificate (apksigner verify --print-certs):
+  { "server": "https://<host>/xrnhome", "ssh": ["<ssh-host>"], "signer": "<SHA-256>" }`);
     process.exit(1);
   }
   const config = JSON.parse(readFileSync(CONFIG, "utf8"));
@@ -144,7 +154,7 @@ function readConfig() {
     (h) => spawnSync("ssh", ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", h, "true"]).status === 0
   );
   if (!host) throw new Error(`none of ${hosts.join(", ")} answers over ssh`);
-  return { server, host, signer: config.signer || null };
+  return { server, host, signer: config.signer };
 }
 
 function run(command, args, cwd, env) {

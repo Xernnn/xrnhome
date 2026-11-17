@@ -20,7 +20,3 @@ test("no plugin of this repo changes how release builds are signed", () => {
   }
 });
 
-test("the release script won't publish an APK whose signer it couldn't check", () => {
-  const script = fs.readFileSync(path.join(root, "scripts", "release.mjs"), "utf8");
-  expect(script).toMatch(/if \(signer && !cert\)/);
-});
