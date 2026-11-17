@@ -79,6 +79,15 @@ describe("a picked photo", () => {
   });
 });
 
+describe("a picked photo that can't be copied", () => {
+  it("fails the save instead of leaving the item on the picker's passing copy", async () => {
+    jest.spyOn(console, "error").mockImplementation(() => {});
+    sizeIs(800, 600);
+    FileSystem.copyAsync.mockRejectedValueOnce(new Error("no space"));
+    await expect(persistImage("file:///cache/ImagePicker/picked.jpg")).rejects.toThrow("couldn't be saved");
+  });
+});
+
 describe("a photo path from a backup file", () => {
   const climbing = [
     "file:///docs/xrnhome_images/../../databases/RKStorage",

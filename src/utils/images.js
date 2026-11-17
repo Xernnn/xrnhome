@@ -115,7 +115,9 @@ const uploadFromBrowser = async (uri) => {
 };
 
 // Copies a picked image URI into persistent storage, shrinking it if it's large;
-// returns the new stable URI.
+// returns the new stable URI. Throws when the copy fails, so the form stays open
+// with the photo: the picker's own copy sits in a cache the system empties, and
+// the server never gets it.
 export const persistImage = async (uri) => {
   if (!uri || !IMAGE_DIR) {
     return uri ?? null;
@@ -136,8 +138,8 @@ export const persistImage = async (uri) => {
     await FileSystem.copyAsync({ from: source, to: dest });
     return dest;
   } catch (e) {
-    console.error("Failed to persist image, using original URI:", e);
-    return uri;
+    console.error("Failed to persist image:", e);
+    throw new Error("The photo couldn't be saved.");
   }
 };
 
