@@ -530,6 +530,28 @@ class SyncServerTest(unittest.TestCase):
         self.assertEqual([200], wrote)
         self.assertEqual(["back.jpg"], os.listdir(folder))
 
+    def test_a_copy_that_cant_be_read_is_kept_and_the_newest_kept_copy_stands_in(self):
+        # It read as "version 0, empty": the count started again, and the next writes took the
+        # numbers of the copies kept in history/.
+        v = '"0"'
+        for n in range(4):
+            v = self.call("PUT", "/state", snapshot(f"item {n}"), {"If-Match": v})[2]["ETag"]
+        folder = os.path.join(self.data, "users", "sonn")
+        with open(os.path.join(folder, "state.json"), "w") as f:
+            f.write('{"version": 4, "data": {"items": [{"na')
+        with unittest.mock.patch("sys.stderr", new_callable=io.StringIO) as log:
+            status, body, headers = self.call("GET", "/state")
+        self.assertEqual((200, '"3"', ["item 2"]),
+                         (status, headers["ETag"], [i["name"] for i in json.loads(body)["items"]]))
+        aside = [n for n in os.listdir(folder) if n.startswith("state.json.damaged-")]
+        self.assertEqual(1, len(aside))
+        with open(os.path.join(folder, aside[0])) as f:
+            self.assertIn('"version": 4', f.read())
+        self.assertIn("can't be read", log.getvalue())
+        status, _, headers = self.call("PUT", "/state", snapshot("again"), {"If-Match": '"3"'})
+        self.assertEqual((200, '"4"'), (status, headers["ETag"]))
+        self.assertTrue(os.path.exists(os.path.join(folder, "history", "1.json")))
+
     def test_a_photo_waits_for_the_item_that_names_it(self):
         # The laptop sends a photo as it's picked, and the item a little later. Shut
         # in between, it can be away for days before the item follows.
