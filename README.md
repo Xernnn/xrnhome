@@ -33,7 +33,7 @@ and update itself from it. Your data goes nowhere else.
 - **Count part-used items** — for things like a bottle of oil, track how much of
   the open one is left instead of pretending it is full or empty.
 - **Expiry dates** — give an item an optional expiry date. Anything expired or
-  due within four days is flagged on its card and counted in a banner at the top
+  due within four days is flagged on its row and counted in a banner at the top
   of its tab, and a notification tells you four days ahead and on the day. When
   you buy more of something that had a date, the app asks for the new one.
 - **Shopping list** — type anything you need into the box on the Shopping tab,
@@ -48,9 +48,11 @@ and update itself from it. Your data goes nowhere else.
   "Ran out", one tap from going back on it. Deleting, finishing a unit and taking
   something off the list all show an undo button for a few seconds, and a form
   with unsaved changes asks before it closes.
-- **Quick to browse** — items sit three to a row on a panel in their category's
-  colour, and a card only spends room on a photo if there is one. Search looks
-  through both tabs, including things that have run out.
+- **Quick to browse** — each tab is a plain list, one card per category and one
+  row per item: its picture, its name, and minus and plus around how much is
+  left. A line under the name appears only when something needs noticing:
+  expired, expiring soon or on the list. Search looks through both tabs,
+  including things that have run out.
 - **Light and dark** — soft greys rather than stark white or black, in the same
   look as the other xrn apps. Follows your system theme, or pick one in
   Settings.
@@ -59,12 +61,8 @@ and update itself from it. Your data goes nowhere else.
   few seconds after each change. A new phone, or the same phone after a
   reinstall, restores everything from it. The server also hands out new builds
   of the app: they download on Wi-Fi, and install after asking.
-- **Cards in the colour of the pack** — each item's card takes its colour from
-  its photo, so the page looks like your own shelves. Anything counted in % shows
-  what's left as a line across the photo.
 - **The same app on your laptop** — the server also serves the app as a web page,
-  laid out for a big screen: the same cards in a wider grid, the shopping list
-  always beside them, and a box to add things by typing a name and pressing Enter.
+  laid out for a big screen: the same list, the shopping list always beside it, and a box to add things by typing a name and pressing Enter.
   Open it in a browser and sign in, and it stays in step with the phone: changes on
   either side show up on the other while the app is open, and the two are merged
   rather than one replacing the other.
@@ -204,19 +202,20 @@ connection. There's no camera, reminders or backup files, since the server keeps
 copies. It keeps a list of its own in the browser and merges it with the server's the
 same way the phone does.
 
-![The laptop version, with an item open beside the cards](docs/screenshots/laptop-light.png)
+![The laptop version, with an item open beside the list](docs/screenshots/laptop-light.png)
 
 In a window at least 1000 pixels wide, the shopping list stays open beside your items
-as a basket, and clicking a card opens that item in its place. Point at a card for a
-cart button that puts it on the list. The box at the top adds things: type a name and
-press Enter, and the cursor stays there for the next one. A name you already have adds
-to that item instead of making a second one. **More…** opens the full form, for a
-photo or an expiry date. In a narrower window you get the phone's layout.
+as a basket, and clicking an item opens it in its place. Typing the name of something
+you have into the basket's box puts it on the list. The box at the top adds things:
+type a name and press Enter, and the cursor stays there for the next one. A name you
+already have adds to that item instead of making a second one. **More…** opens the
+full form, for a photo or an expiry date. In a narrower window you get the phone's
+layout.
 
 | Key | What it does |
 | --- | --- |
 | `/` | Go to the box that adds things |
-| `Esc` | Close the item beside the cards |
+| `Esc` | Close the item beside the list |
 
 ## How the counting works
 
@@ -237,7 +236,7 @@ to the stock that is gone. The app remembers that the item has one and asks for
 the new date when you buy more. Adding more of something you still have keeps the
 earlier of the two dates.
 
-On a card, minus and plus move the open unit by 10% for an item counted in %.
+In the list, minus and plus move the open unit by 10% for an item counted in %.
 Hold plus to add a whole new one. The item's page has "Bought more" for any
 amount.
 
@@ -266,7 +265,7 @@ src/
                         server, Your categories, Add, Edit, Item detail, and
                         the page for unreadable data
   components/           the shared building blocks (ui.js), the item form,
-                        item cards, category grid, stepper, toast, badges
+                        item rows, stepper, toast, badges
   desktop/              the page the laptop version puts round the app's screens
   context/              inventory state, theme, reminders, home server sync
                         and updates
