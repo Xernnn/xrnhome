@@ -370,31 +370,48 @@ def photos_named(doc):
     return {i["photo"] for i in items if isinstance(i, dict) and isinstance(i.get("photo"), str)}
 
 
+def file_stamp(path):
+    """What changes whenever the file is written again (they're swapped in by rename), or None."""
+    try:
+        st = os.stat(path)
+        return st.st_ino, st.st_mtime_ns, st.st_size
+    except OSError:
+        return None
+
+
 def prune_photos(user, force=False):
-    """Deletes the photos that no kept copy names (and that aren't brand new)."""
+    """Deletes the photos that no kept copy names (and that aren't brand new). The copies, up to
+    eighty of them, are read without `lock`, which every other read and write of this user's waits
+    for: each is swapped in whole by rename, so a read gets one version or another. A write that
+    lands meanwhile may name a photo they didn't, so then nothing is deleted: the next sweep goes
+    by the copies as they are then."""
     if not force and time.monotonic() - pruned.get(user, -PRUNE_EVERY_S) < PRUNE_EVERY_S:
         return
     pruned[user] = time.monotonic()
     folder = user_dir(user, "photos")
     if not os.path.isdir(folder):
         return
-    with lock:
-        named = photos_named(read_state(user))
-        for sub in ("history", "daily"):
-            d = user_dir(user, sub)
-            if os.path.isdir(d):
-                for n in os.listdir(d):
-                    if n.endswith(".json"):
-                        named |= photos_named(read_doc(os.path.join(d, n)))
+    state = user_dir(user, "state.json")
+    seen = file_stamp(state)
+    named = photos_named(read_doc(state))
+    for sub in ("history", "daily"):
+        d = user_dir(user, sub)
+        if os.path.isdir(d):
+            for n in os.listdir(d):
+                if n.endswith(".json"):
+                    named |= photos_named(read_doc(os.path.join(d, n)))
     now = time.time()
-    with photo_lock:
-        for n in os.listdir(folder):
-            path = os.path.join(folder, n)
-            try:
-                if n not in named and now - os.stat(path).st_mtime > PHOTO_GRACE_S:
-                    os.remove(path)
-            except OSError:
-                pass
+    with lock:
+        if file_stamp(state) != seen:
+            return
+        with photo_lock:
+            for n in os.listdir(folder):
+                path = os.path.join(folder, n)
+                try:
+                    if n not in named and now - os.stat(path).st_mtime > PHOTO_GRACE_S:
+                        os.remove(path)
+                except OSError:
+                    pass
 
 
 def photos_in_use(folder, replacing):

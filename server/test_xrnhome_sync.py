@@ -485,6 +485,51 @@ class SyncServerTest(unittest.TestCase):
         srv.prune_photos("sonn", force=True)
         self.assertEqual(["kept.jpg", "new.jpg"], sorted(os.listdir(folder)))
 
+    def old_photos(self, *names):
+        folder = os.path.join(self.data, "users", "sonn", "photos")
+        old = time.time() - srv.PHOTO_GRACE_S - 60
+        for name in names:
+            self.call("PUT", f"/photos/{name}", b"x", raw=True)
+            os.utime(os.path.join(folder, name), (old, old))
+        return folder
+
+    def test_the_sweep_reads_the_kept_copies_without_holding_up_the_others(self):
+        # It parsed state.json and up to 80 kept copies under the lock every read and write waits
+        # for, so on the phone a sweep held up every other request meanwhile.
+        v = '"0"'
+        for n in range(5):
+            v = self.call("PUT", "/state", snapshot(f"item {n}"), {"If-Match": v})[2]["ETag"]
+        folder = self.old_photos("gone.jpg")
+        real, under_lock = srv.read_doc, []
+
+        def watched(path):
+            under_lock.append(srv.lock.locked())
+            return real(path)
+
+        with unittest.mock.patch.object(srv, "read_doc", watched):
+            srv.prune_photos("sonn", force=True)
+        self.assertGreater(len(under_lock), 5)
+        self.assertNotIn(True, under_lock)
+        self.assertEqual([], os.listdir(folder))
+
+    def test_a_write_during_the_sweep_keeps_the_photo_it_names(self):
+        self.call("PUT", "/state", snapshot("Milk"), {"If-Match": '"0"'})
+        self.call("PUT", "/state", snapshot("Milk", "Eggs"), {"If-Match": '"1"'})
+        folder = self.old_photos("back.jpg")
+        real, wrote = srv.read_doc, []
+
+        def write_meanwhile(path):
+            # An item with that old photo comes back (an undone delete on the laptop, say) while
+            # the sweep is reading the copies that don't name it.
+            if not wrote and "history" in path:
+                wrote.append(self.call("PUT", "/state", snapshot("Milk", photo="back.jpg"), {"If-Match": '"2"'})[0])
+            return real(path)
+
+        with unittest.mock.patch.object(srv, "read_doc", write_meanwhile):
+            srv.prune_photos("sonn", force=True)
+        self.assertEqual([200], wrote)
+        self.assertEqual(["back.jpg"], os.listdir(folder))
+
     def test_a_photo_waits_for_the_item_that_names_it(self):
         # The laptop sends a photo as it's picked, and the item a little later. Shut
         # in between, it can be away for days before the item follows.
