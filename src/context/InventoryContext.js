@@ -252,7 +252,7 @@ export function InventoryProvider({ children }) {
   }, []);
 
   const undoDelete = useCallback(() => {
-    dispatch({ type: ACTIONS.RESTORE_ITEM });
+    dispatch({ type: ACTIONS.RESTORE_ITEM, payload: { now: new Date().toISOString() } });
   }, []);
 
   const clearUndo = useCallback(() => {

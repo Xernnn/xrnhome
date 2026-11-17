@@ -25,8 +25,8 @@ export const initialState = {
   items: [],
   loading: true,
   // What the toast offers: { type: "delete", item, index, label } and
-  // { type: "change", id, before, label } can be undone; { type: "expiry", id,
-  // label } asks for a new date; { type: "notice", label } only says something.
+  // { type: "change", id, before, after, label } can be undone; { type: "expiry",
+  // id, label } asks for a new date; { type: "notice", label } only says something.
   undo: null,
   // null, or { type: "unreadable" } (the saved items couldn't be read, so nothing
   // may be written over them), or { type: "recovered", count } (they were
@@ -683,8 +683,46 @@ export function computeStep(item, dir) {
   };
 }
 
+// The fields undoing a change puts back itself; the rest are put back only
+// where the change touched them (see undoChange).
+const UNDO_OWN = new Set(["id", "createdAt", "updatedAt", "history", "quantity", "mergedFrom"]);
+const historyKey = (entry) => `${entry.date}|${entry.action}`;
+
+// The item `current` once the change that turned `before` into `after` is undone.
+// Nothing else happened to it since: then it's `before`. Otherwise a sync may have
+// merged the other device's edits in meanwhile, and the whole of `before` would
+// drop them, here and then on the other device too. So only what the change
+// touched goes back, where it still stands as the change left it, and the count
+// by what the change added or took: one used here undone over three bought on
+// the laptop is still those three.
+export const undoChange = (current, before, after, now) => {
+  if (!after || same(current, after)) {
+    return before;
+  }
+  const next = { ...current };
+  new Set([...Object.keys(before), ...Object.keys(after)]).forEach((field) => {
+    if (
+      !UNDO_OWN.has(field) &&
+      !same(before[field], after[field]) &&
+      same(current[field], after[field])
+    ) {
+      next[field] = before[field];
+    }
+  });
+  next.quantity = cleanQuantity(current.quantity + before.quantity - after.quantity);
+  const made = new Set((before.history || []).map(historyKey));
+  const added = new Set(
+    (after.history || []).map(historyKey).filter((key) => !made.has(key))
+  );
+  next.history = allHistory(before, {
+    history: (current.history || []).filter((entry) => !added.has(historyKey(entry))),
+  });
+  next.updatedAt = now || current.updatedAt;
+  return settle(next);
+};
+
 // Applies a change to the item at `index`. `undoLabel` keeps a copy of the item
-// as it was and offers it back.
+// as it was, and as the change left it, and offers it back.
 const applyChange = (state, index, { changes, historyEntry, now, undoLabel }) => {
   const existing = state.items[index];
   const history = existing.history ? [...existing.history] : [];
@@ -737,7 +775,7 @@ const applyChange = (state, index, { changes, historyEntry, now, undoLabel }) =>
       label: `${existing.name} needs a new expiry date`,
     };
   } else if (undoLabel) {
-    undo = { type: "change", id: existing.id, before: existing, label: undoLabel };
+    undo = { type: "change", id: existing.id, before: existing, after: next, label: undoLabel };
   }
   return { ...state, items, undo };
 };
@@ -816,6 +854,7 @@ export function reducer(state, action) {
                 type: "change",
                 id: existing.id,
                 before: existing,
+                after: items[index],
                 label: `Added to ${existing.name}: ${countText(quantity, existing.unit)} now`,
               }
             : state.undo,
@@ -947,7 +986,9 @@ export function reducer(state, action) {
         return {
           ...state,
           items: state.items.map((item) =>
-            item.id === undo.id ? undo.before : item
+            item.id === undo.id
+              ? undoChange(item, undo.before, undo.after, action.payload?.now)
+              : item
           ),
           undo: null,
         };
