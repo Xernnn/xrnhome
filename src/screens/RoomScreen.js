@@ -1,11 +1,11 @@
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
   FlatList,
-  Platform,
   Text,
   TouchableOpacity,
   View,
   StyleSheet,
+  useWindowDimensions,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
@@ -13,16 +13,19 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useInventory } from "../context/InventoryContext";
 import { useTheme } from "../context/ThemeContext";
 import SearchBar from "../components/SearchBar";
-import ItemRow from "../components/ItemRow";
+import ItemCard from "../components/ItemCard";
+import { BLOB_HALF_GAP, BlobGridRow } from "../components/CategoryBlobGrid";
+import { blobRows, columnsFor } from "../utils/blobLayout";
 import EmptyState from "../components/EmptyState";
 import { PageTitle, RoundIconButton } from "../components/ui";
 import { haptics } from "../utils/haptics";
 import {
-  FORM_WIDTH,
+  PAGE_WIDTH,
   RADIUS,
   ROOMS,
   SPACING,
   TYPE,
+  categoryColor,
   daysUntilExpiry,
   getExpiryStatus,
   getRoomCategories,
@@ -32,11 +35,8 @@ import {
   itemCount,
 } from "../utils/constants";
 
-// In a browser window the list keeps to a readable width, as a phone shows it.
-const COLUMN =
-  Platform.OS === "web"
-    ? { width: "100%", maxWidth: FORM_WIDTH, alignSelf: "center" }
-    : null;
+// Less than a page's margin, so the cards get the room.
+const GRID_GUTTER = 12;
 
 const groupByCategory = (list, room) => {
   const categories = getRoomCategories(room);
@@ -49,30 +49,17 @@ const groupByCategory = (list, room) => {
     .filter((group) => group.items.length > 0);
 };
 
-// A room's page is one flat list, so that only what's on screen gets drawn: for
-// each group a heading, then its items as the rows of one card.
-export const buildRows = (groups) =>
-  groups.flatMap((group) => [
-    {
-      type: "header",
-      key: `header-${group.label}`,
-      label: group.label,
-      count: group.items.length,
-    },
-    ...group.items.map((item, index) => ({
-      type: "item",
-      key: item.id,
-      item,
-      first: index === 0,
-      last: index === group.items.length - 1,
-    })),
-  ]);
-
 export default function RoomScreen({ navigation, route }) {
   const room = getRoomMeta(route.params && route.params.room);
   const { items, stepItem, buyItem } = useInventory();
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const { width } = useWindowDimensions();
+  // What the page was given, which on a laptop is less than the window.
+  const [measured, setMeasured] = useState(0);
+  const gridWidth = (measured || Math.min(width, PAGE_WIDTH)) - GRID_GUTTER * 2;
+  const columns = columnsFor(gridWidth);
+  const cellWidth = Math.floor(gridWidth / columns);
 
   const [search, setSearch] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
@@ -104,20 +91,29 @@ export default function RoomScreen({ navigation, route }) {
         item.name.toLowerCase().includes(query)
       );
       return ROOMS.map((entry) => ({
-        label: entry.label,
+        meta: { label: entry.label, icon: entry.icon, color: colors.textSecondary },
         items: matches.filter((item) => item.room === entry.key),
       })).filter((group) => group.items.length > 0);
     }
     if (showingExpiring) {
-      return [{ label: "Expiring soon", items: expiring }];
+      return [
+        {
+          meta: { label: "Expiring soon", icon: "clock-alert-outline", color: colors.warning },
+          items: expiring,
+        },
+      ];
     }
     return groupByCategory(inStock, room.key).map((group) => ({
-      label: group.meta.label,
+      meta: {
+        label: group.meta.label,
+        icon: group.meta.icon,
+        color: categoryColor(group.meta, isDark),
+      },
       items: group.items,
     }));
-  }, [searching, query, items, showingExpiring, expiring, inStock, room.key]);
+  }, [searching, query, items, showingExpiring, expiring, inStock, room.key, colors, isDark]);
 
-  const rows = useMemo(() => buildRows(groups), [groups]);
+  const rows = useMemo(() => blobRows(groups, columns), [groups, columns]);
   const shownCount = groups.reduce((sum, group) => sum + group.items.length, 0);
 
   const openAddItem = useCallback(
@@ -143,28 +139,29 @@ export default function RoomScreen({ navigation, route }) {
     [buyItem]
   );
 
+  const renderCard = useCallback(
+    (item, cardWidth) => (
+      <ItemCard
+        item={item}
+        width={cardWidth}
+        onOpen={openDetail}
+        onStep={handleStep}
+        onBuy={handleBuy}
+      />
+    ),
+    [openDetail, handleStep, handleBuy]
+  );
+
   const renderRow = useCallback(
-    ({ item: row }) =>
-      row.type === "header" ? (
-        <View style={styles.header} accessibilityRole="header">
-          <Text style={styles.headerLabel} numberOfLines={1}>
-            {row.label}
-          </Text>
-          <Text style={styles.headerCount}>{row.count}</Text>
-        </View>
-      ) : (
-        <View style={styles.rowWrap}>
-          <ItemRow
-            item={row.item}
-            first={row.first}
-            last={row.last}
-            onOpen={openDetail}
-            onStep={handleStep}
-            onBuy={handleBuy}
-          />
-        </View>
-      ),
-    [styles, openDetail, handleStep, handleBuy]
+    ({ item: row }) => (
+      <BlobGridRow
+        row={row}
+        columns={columns}
+        cellWidth={cellWidth}
+        renderCard={renderCard}
+      />
+    ),
+    [columns, cellWidth, renderCard]
   );
 
   const toggleSearch = () => {
@@ -245,7 +242,11 @@ export default function RoomScreen({ navigation, route }) {
   );
 
   return (
-    <SafeAreaView style={[styles.safe, COLUMN]} edges={["top"]}>
+    <SafeAreaView
+      style={styles.safe}
+      edges={["top"]}
+      onLayout={(event) => setMeasured(event.nativeEvent.layout.width)}
+    >
       <PageTitle
         title={room.label}
         subtitle={itemCount(inStock.length)}
@@ -283,6 +284,7 @@ export default function RoomScreen({ navigation, route }) {
         <FlatList
           ref={list}
           style={styles.list}
+          contentContainerStyle={styles.grid}
           data={rows}
           keyExtractor={(row) => row.key}
           renderItem={renderRow}
@@ -316,26 +318,8 @@ const createStyles = (colors) =>
     list: {
       flex: 1,
     },
-    header: {
-      flexDirection: "row",
-      alignItems: "center",
-      marginHorizontal: SPACING.screen + 4,
-      marginTop: 18,
-      marginBottom: 8,
-    },
-    headerLabel: {
-      ...TYPE.section,
-      flexShrink: 1,
-      color: colors.textSecondary,
-    },
-    headerCount: {
-      ...TYPE.section,
-      marginLeft: 8,
-      color: colors.textSecondary,
-      opacity: 0.7,
-    },
-    rowWrap: {
-      marginHorizontal: SPACING.screen,
+    grid: {
+      paddingHorizontal: GRID_GUTTER,
     },
     searchWrap: {
       paddingHorizontal: SPACING.screen,
@@ -351,8 +335,9 @@ const createStyles = (colors) =>
     banner: {
       flexDirection: "row",
       alignItems: "center",
-      marginHorizontal: SPACING.screen,
-      marginTop: 6,
+      marginHorizontal: BLOB_HALF_GAP,
+      marginTop: 4,
+      marginBottom: 6,
       paddingHorizontal: 14,
       paddingVertical: 10,
       backgroundColor: colors.surface,
