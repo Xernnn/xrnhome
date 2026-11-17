@@ -269,25 +269,56 @@ class SyncServerTest(unittest.TestCase):
         self.assertEqual(1, checks("nobody:nope"))  # none: the answer came sooner, and said so
         self.assertIsNone(srv.check_login("Basic " + base64.b64encode(b"nobody:secret").decode()))
 
+    def timed(self, addr, password):
+        start = time.monotonic()
+        status = self.call("GET", "/state", password=password, headers={"X-Forwarded-For": addr})[0]
+        return status, time.monotonic() - start
+
     def test_a_request_with_no_password_isnt_held(self):
         # The hold after a wrong password slows a guesser down. One that sent no password, as the
         # browser's first try at the laptop version does, guessed nothing and was held all the same.
-        def timed(addr, password):
-            start = time.monotonic()
-            status = self.call("GET", "/state", password=password, headers={"X-Forwarded-For": addr})[0]
-            return status, time.monotonic() - start
-        srv.failures["203.0.113.61"] = {str(i): (time.monotonic(), "sonn") for i in range(srv.FAIL_LIMIT)}  # locked out
         srv.FAIL_DELAY_S = 0.5
         try:
-            for addr, status in (("203.0.113.60", 401), ("203.0.113.61", 429)):
-                got, took = timed(addr, None)
-                self.assertEqual(status, got)
-                self.assertLess(took, 0.4, addr)
-                got, took = timed(addr, "nope")
-                self.assertEqual(status, got)
-                self.assertGreaterEqual(took, 0.5, addr)
+            got, took = self.timed("203.0.113.60", None)
+            self.assertEqual(401, got)
+            self.assertLess(took, 0.4)
+            got, took = self.timed("203.0.113.60", "nope")
+            self.assertEqual(401, got)
+            self.assertGreaterEqual(took, 0.5)
         finally:
             srv.FAIL_DELAY_S = 0
+
+    def test_a_locked_out_address_is_answered_at_once(self):
+        # Its login isn't checked, so holding the 429 slowed no guess down: it only parked a
+        # thread for every request a flood sent.
+        srv.failures["203.0.113.61"] = {str(i): (time.monotonic(), "sonn") for i in range(srv.FAIL_LIMIT)}
+        srv.FAIL_DELAY_S = 0.5
+        try:
+            for password in (None, "nope", RIGHT):
+                got, took = self.timed("203.0.113.61", password)
+                self.assertEqual(429, got)
+                self.assertLess(took, 0.4, password)
+        finally:
+            srv.FAIL_DELAY_S = 0
+
+    def test_only_a_few_wrong_logins_are_held_at_once(self):
+        # Each held answer is a thread on the old phone. Many connections sending bad passwords
+        # each held one for the whole delay.
+        srv.FAIL_DELAY_S = 0.5
+        held, srv.held = srv.held, threading.BoundedSemaphore(2)
+        took = []
+        try:
+            burst = [threading.Thread(target=lambda n=n: took.append(self.timed(f"203.0.113.{100 + n}", "nope")[1]))
+                     for n in range(6)]
+            for t in burst:
+                t.start()
+            for t in burst:
+                t.join()
+        finally:
+            srv.held = held
+            srv.FAIL_DELAY_S = 0
+        self.assertEqual(6, len(took))
+        self.assertEqual(2, len([t for t in took if t >= 0.5]))
 
     def test_wrong_passwords_lock_the_address_out(self):
         srv.FAIL_LIMIT = 3

@@ -60,6 +60,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 MAX_BODY = 8 * 1024 * 1024
 MAX_PHOTO = 15 * 1024 * 1024
 FAIL_DELAY_S = 2  # after a wrong password, as Radicale does
+MAX_HELD = 8  # wrong logins held for FAIL_DELAY_S at once; any more are answered at once
 AUTH_CACHE_S = 600  # a bcrypt check costs ~0.3s on a phone; don't pay it per request
 FAIL_LIMIT = 10  # different wrong logins from one address within FAIL_WINDOW_S, then 429 until they age out
 FAIL_WINDOW_S = 15 * 60
@@ -127,6 +128,7 @@ fail_settled = threading.Condition(fail_lock)  # a login being checked has been 
 # client address -> {sha256 of a wrong Authorization: (monotonic time it last came, user name it tried)}
 failures = {}
 checking = {}  # client address -> how many of its logins are being checked right now
+held = threading.BoundedSemaphore(MAX_HELD)
 pruned = {}  # user -> time.monotonic() of the last photo sweep
 
 
@@ -299,6 +301,17 @@ def settle_guess(addr, header, right):
         fail_settled.notify_all()
 
 
+def hold_wrong_login():
+    """Holds the answer to a wrong login FAIL_DELAY_S, to slow a guesser down. Each held answer is a
+    thread, and many connections each sending a bad password parked one apiece on the old phone,
+    so at most MAX_HELD are held at a time; past that the lockout is what stops a guesser."""
+    if held.acquire(blocking=False):
+        try:
+            time.sleep(FAIL_DELAY_S)
+        finally:
+            held.release()
+
+
 def user_dir(user, *parts):
     return os.path.join(args.data, "users", user, *parts)
 
@@ -464,9 +477,8 @@ class Handler(BaseHTTPRequestHandler):
         addr = client_address(self)
         header = self.headers.get("Authorization")
         # A login holds a place in the count while it is checked (reserve_guess).
+        # Turned away unchecked, a login guesses nothing, so its 429 isn't held.
         if not (reserve_guess(addr, header) if header else not locked_out(addr)):
-            if header:
-                time.sleep(FAIL_DELAY_S)
             self.send(429, "too many wrong passwords; try again later",
                       headers={"Retry-After": str(FAIL_WINDOW_S)})
             return None
@@ -485,7 +497,7 @@ class Handler(BaseHTTPRequestHandler):
         if not user:
             # A request with no password guessed nothing, and needn't hold a thread for it.
             if header:
-                time.sleep(FAIL_DELAY_S)
+                hold_wrong_login()
             self.send(401, "login required", headers={"WWW-Authenticate": 'Basic realm="xrnhome"'})
             return None
         return user
