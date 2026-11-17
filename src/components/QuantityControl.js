@@ -12,6 +12,9 @@ import { useTheme } from "../context/ThemeContext";
 import { FONTS, MAX_QUANTITY } from "../utils/constants";
 
 const REPEAT_MS = 90;
+// Android's smallest touch target, in dp. A smaller button reaches it with
+// hitSlop, so it looks no bigger.
+const MIN_TARGET = 48;
 
 // A round − or + that can repeat while it's held. Long-pressing does `onHold`
 // instead when there is one.
@@ -25,6 +28,7 @@ function StepButton({
   label,
   styles,
   iconColor,
+  hitSlop,
 }) {
   const press = useRef(onPress);
   press.current = onPress;
@@ -53,7 +57,7 @@ function StepButton({
       onPressOut={stop}
       delayLongPress={350}
       disabled={disabled}
-      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+      hitSlop={hitSlop}
       style={[
         styles.button,
         { width: size, height: size, borderRadius: size / 2 },
@@ -68,7 +72,10 @@ function StepButton({
 }
 
 // − something + with round grey buttons. The one stepper in the app: whatever
-// sits between the buttons is the caller's.
+// sits between the buttons is the caller's. Each button takes touches over at
+// least MIN_TARGET each way. `slop` ({ top, bottom, outer, inner }, in dp past the
+// button) is for a caller that clips touches near its edge: what it can't reach
+// outwards it then gives inwards, towards the value.
 export function Stepper({
   children,
   onMinus,
@@ -80,10 +87,18 @@ export function Stepper({
   plusLabel = "More",
   repeat = false,
   size = 38,
+  slop,
   style,
 }) {
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const around = Math.max(6, Math.ceil((MIN_TARGET - size) / 2));
+  const { top, bottom, outer, inner } = slop || {
+    top: around,
+    bottom: around,
+    outer: around,
+    inner: around,
+  };
   return (
     <View style={[styles.container, style]}>
       <StepButton
@@ -95,6 +110,7 @@ export function Stepper({
         label={minusLabel}
         styles={styles}
         iconColor={colors.textPrimary}
+        hitSlop={{ top, bottom, left: outer, right: inner }}
       />
       {children != null ? (
         <View style={styles.valueWrap}>{children}</View>
@@ -111,6 +127,7 @@ export function Stepper({
         label={plusLabel}
         styles={styles}
         iconColor={colors.textPrimary}
+        hitSlop={{ top, bottom, left: inner, right: outer }}
       />
     </View>
   );

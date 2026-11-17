@@ -20,6 +20,12 @@ import ExpiryPill from "./ExpiryPill";
 import { Stepper } from "./QuantityControl";
 import { Pop } from "./ui";
 
+// The card clips touches at its edge, which is only the stepper's padding (5)
+// past the outer side of each button, so the rest of the 48 dp goes inwards: 17
+// from each button still leaves the value between them free on a 360 dp phone.
+// Downwards it reaches the card's edge; upwards it takes a strip of the name.
+const STEPPER_SLOP = { top: 13, bottom: 11, outer: 5, inner: 17 };
+
 // One item as a card in its category's colour, so everything in a category
 // looks alike: the photo, or the category's icon on its tint; a green cart when
 // it's on the shopping list and the date when it's close; the name; and − how
@@ -96,6 +102,7 @@ function ItemCard({ item, width, onOpen, onStep, onBuy }) {
 
       <Stepper
         size={26}
+        slop={STEPPER_SLOP}
         onMinus={() => onStep(item.id, -1)}
         onPlus={() => onStep(item.id, 1)}
         onPlusHold={() => onBuy(item.id)}
