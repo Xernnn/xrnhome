@@ -138,7 +138,8 @@ This builds the release APK on your computer and uploads it to the server over
 ssh, with an `app.json` that names it. It bumps `android.versionCode` in
 `app.json` first if the server already has that build. The app checks every
 few hours, or right away from Settings → Check for updates. It downloads the
-APK and opens Android's installer. The script reads
+APK, checks its SHA-256 against the one in `app.json`, and opens Android's
+installer. The script reads
 `~/.config/xrnhome/release.json`:
 
 ```json
