@@ -43,6 +43,8 @@ class SyncServerTest(unittest.TestCase):
         srv.args = type("Args", (), {"data": self.data, "users": users})()
         srv.FAIL_DELAY_S = 0
         srv.failures.clear()
+        srv.checking.clear()
+        srv.auth_cache.clear()
         srv.pruned.clear()
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), srv.Handler)
         self.httpd.daemon_threads = True
@@ -274,7 +276,7 @@ class SyncServerTest(unittest.TestCase):
             start = time.monotonic()
             status = self.call("GET", "/state", password=password, headers={"X-Forwarded-For": addr})[0]
             return status, time.monotonic() - start
-        srv.failures["203.0.113.61"] = {str(i): time.monotonic() for i in range(srv.FAIL_LIMIT)}  # locked out
+        srv.failures["203.0.113.61"] = {str(i): (time.monotonic(), "sonn") for i in range(srv.FAIL_LIMIT)}  # locked out
         srv.FAIL_DELAY_S = 0.5
         try:
             for addr, status in (("203.0.113.60", 401), ("203.0.113.61", 429)):
@@ -332,6 +334,68 @@ class SyncServerTest(unittest.TestCase):
             self.assertEqual(200, self.call("GET", "/state")[0])
         finally:
             srv.FAIL_LIMIT = 10
+
+    def add_user(self, name, password):
+        import bcrypt
+
+        with open(srv.args.users, "a") as f:
+            f.write(f"{name}:" + bcrypt.hashpw(password.encode(), bcrypt.gensalt(4)).decode() + "\n")
+
+    def as_user(self, name, password, addr="203.0.113.80"):
+        header = "Basic " + base64.b64encode(f"{name}:{password}".encode()).decode()
+        return self.call("GET", "/state", password=None,
+                         headers={"Authorization": header, "X-Forwarded-For": addr})[0]
+
+    def test_a_right_login_clears_only_its_own_names_mistakes(self):
+        # Any right login cleared its whole address's count: a second account (or a device
+        # signing in) behind the same address gave a guesser all its guesses back.
+        self.add_user("guest", "guestpass")
+        for n in range(srv.FAIL_LIMIT - 1):
+            self.assertEqual(401, self.as_user("sonn", f"guess{n}"))
+        self.assertEqual(200, self.as_user("guest", "guestpass"))
+        self.assertEqual(401, self.as_user("sonn", "guess-last"))
+        self.assertEqual(429, self.as_user("sonn", "one-more"))
+
+    def test_a_right_password_clears_that_names_own_mistakes(self):
+        for n in range(srv.FAIL_LIMIT - 1):
+            self.assertEqual(401, self.as_user("sonn", f"typo{n}"))
+        self.assertEqual(200, self.as_user("sonn", RIGHT))
+        for n in range(srv.FAIL_LIMIT - 1):
+            self.assertEqual(401, self.as_user("sonn", f"again{n}"))
+
+    def test_a_device_syncing_with_a_known_password_clears_nothing(self):
+        # A device sends its password with every request. Once it's known right that's a session,
+        # not a sign-in, and it cleared the count for its whole address every 30 seconds.
+        self.assertEqual(200, self.as_user("sonn", RIGHT))
+        for n in range(srv.FAIL_LIMIT - 1):
+            self.assertEqual(401, self.as_user("sonn", f"guess{n}"))
+        self.assertEqual(200, self.as_user("sonn", RIGHT))
+        self.assertEqual(401, self.as_user("sonn", "guess-last"))
+        self.assertEqual(429, self.as_user("sonn", "one-more"))
+
+    def test_a_login_being_checked_is_no_wrong_one(self):
+        # Every login took a place in the count before it was checked: two devices signing in at
+        # once at an address with a few mistakes behind it got 429 with the right password.
+        self.add_user("guest", "guestpass")
+        for n in range(srv.FAIL_LIMIT - 1):
+            self.assertEqual(401, self.as_user("nobody", f"guess{n}"))
+        real, answers = srv.check_login, []
+
+        def slow(header):
+            time.sleep(0.3)
+            return real(header)
+
+        srv.check_login = slow
+        try:
+            both = [threading.Thread(target=lambda u=u, p=p: answers.append(self.as_user(u, p)))
+                    for u, p in (("sonn", RIGHT), ("guest", "guestpass"))]
+            for t in both:
+                t.start()
+            for t in both:
+                t.join()
+        finally:
+            srv.check_login = real
+        self.assertEqual([200, 200], answers)
 
     def test_releases_come_from_the_update_folder(self):
         os.makedirs(os.path.join(self.data, "update"))
