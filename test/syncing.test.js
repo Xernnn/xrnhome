@@ -32,6 +32,7 @@ jest.mock("expo-file-system/legacy", () => ({
   moveAsync: jest.fn(async () => {}),
   uploadAsync: jest.fn(async () => ({ status: 201 })),
   downloadAsync: jest.fn(async () => ({ status: 404 })),
+  readDirectoryAsync: jest.fn(async () => []),
   FileSystemUploadType: { BINARY_CONTENT: 0 },
 }));
 jest.mock("expo-image-manipulator", () => ({}));
@@ -179,6 +180,8 @@ beforeEach(async () => {
   );
   AppState.currentState = "active";
   FileSystem.downloadAsync.mockImplementation(async () => ({ status: 404 }));
+  FileSystem.getInfoAsync.mockImplementation(async () => ({ exists: false }));
+  FileSystem.readDirectoryAsync.mockImplementation(async () => []);
   appStateListeners = new Set();
   AppState.addEventListener.mockImplementation((type, listener) => {
     appStateListeners.add(listener);
@@ -310,6 +313,35 @@ describe("a list that couldn't be read at all", () => {
     await startOverWhile(() => true);
     expect(app.inventory.problem).toEqual({ type: "unreadable" });
     expect(await AsyncStorage.getItem(ITEMS_KEY)).toBe(saved);
+  });
+});
+
+describe("photos of items a sync took away", () => {
+  it("go from the phone at the next launch", async () => {
+    const dir = "file:///docs/xrnhome_images/";
+    await launch();
+    await act(async () => {
+      app.inventory.addItem({ name: "Milk", room: "food", category: "Cupboard", quantity: 1, imageUri: `${dir}milk.jpg` });
+      app.inventory.addItem({ name: "Rice", room: "food", category: "Cupboard", quantity: 1, imageUri: `${dir}rice.jpg` });
+    });
+    await wait(16000);
+    // The laptop deletes the rice, and that comes down here.
+    server.doc = { ...server.doc, items: server.doc.items.filter((item) => item.name !== "Rice") };
+    server.version += 1;
+    FileSystem.getInfoAsync.mockImplementation(async (uri) =>
+      uri.startsWith(dir)
+        ? { exists: true, isDirectory: false, modificationTime: (Date.now() - 3 * 86400000) / 1000 }
+        : { exists: false }
+    );
+    await wait(31000);
+    expect(app.inventory.items.map((item) => item.name)).toEqual(["Milk"]);
+    await quit();
+
+    FileSystem.readDirectoryAsync.mockResolvedValue(["milk.jpg", "rice.jpg"]);
+    FileSystem.deleteAsync.mockClear();
+    await launch();
+    await wait(0);
+    expect(FileSystem.deleteAsync.mock.calls.map(([uri]) => uri)).toEqual([`${dir}rice.jpg`]);
   });
 });
 

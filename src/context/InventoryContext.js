@@ -20,7 +20,7 @@ import {
   saveSchemaVersion,
   CURRENT_SCHEMA_VERSION,
 } from "../utils/storage";
-import { deleteImage } from "../utils/images";
+import { deleteImage, sweepPhotos } from "../utils/images";
 import { deviceName } from "../utils/homeServer";
 import {
   DEFAULT_ROOM,
@@ -146,6 +146,18 @@ export function InventoryProvider({ children }) {
       deleteImage(previous.item.imageUri);
     }
   }, [state.undo, state.items]);
+
+  // Once a launch, photos no item names go: those of items a sync, a restore
+  // or an import took away. Not while the list is in doubt, when the items
+  // that name them may still come back.
+  const swept = useRef(false);
+  useEffect(() => {
+    if (state.loading || state.problem || swept.current) {
+      return;
+    }
+    swept.current = true;
+    sweepPhotos(new Set(state.items.map((item) => item.imageUri).filter(Boolean)));
+  }, [state.loading, state.problem, state.items]);
 
   // `announce`: say where the item went when that isn't obvious from where the
   // person is (with none in stock it's on the Shopping tab, not the one they're on).

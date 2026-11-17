@@ -8,6 +8,7 @@ import {
   isPersistedImage,
   persistImage,
   photoFileName,
+  sweepPhotos,
 } from "../src/utils/images";
 
 jest.mock("expo-secure-store", () => ({}));
@@ -17,6 +18,7 @@ jest.mock("expo-file-system/legacy", () => ({
   makeDirectoryAsync: jest.fn(async () => {}),
   copyAsync: jest.fn(async () => {}),
   deleteAsync: jest.fn(async () => {}),
+  readDirectoryAsync: jest.fn(async () => []),
 }));
 jest.mock("expo-image-manipulator", () => ({
   manipulateAsync: jest.fn(async () => ({ uri: "file:///cache/smaller.jpg" })),
@@ -107,5 +109,26 @@ describe("a photo path from a backup file", () => {
     expect(importedImageUri("content://media/external/images/1")).toBe(
       "content://media/external/images/1"
     );
+  });
+});
+
+describe("the photo folder", () => {
+  const now = Date.parse("2026-11-18T12:00:00Z");
+  const daysAgo = (days) => (now - days * 86400000) / 1000;
+
+  it("loses the photos nothing names that aren't new, and keeps the rest", async () => {
+    const dir = "file:///docs/xrnhome_images/";
+    const ages = { "kept.jpg": 30, "gone.jpg": 30, "gone.jpg.part": 3, "fresh.jpg": 0.1 };
+    FileSystem.readDirectoryAsync.mockResolvedValue(Object.keys(ages));
+    FileSystem.getInfoAsync.mockImplementation(async (uri) => ({
+      exists: true,
+      isDirectory: false,
+      modificationTime: daysAgo(ages[uri.slice(dir.length)]),
+    }));
+    expect(await sweepPhotos(new Set([`${dir}kept.jpg`]), now)).toBe(2);
+    expect(FileSystem.deleteAsync.mock.calls.map(([uri]) => uri).sort()).toEqual([
+      `${dir}gone.jpg`,
+      `${dir}gone.jpg.part`,
+    ]);
   });
 });

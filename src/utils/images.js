@@ -160,6 +160,37 @@ export const photoPath = (name) =>
 
 export const ensureImageDir = ensureDir;
 
+// A photo file this new is never swept: it may be one just picked in a form
+// that isn't saved yet, or one a restore is still fetching.
+const SWEEP_AFTER_MS = 24 * 3600 * 1000;
+
+// Deletes the photos in our folder that nothing names any more (`named`, a Set
+// of paths): a sync, a restore or an import drops an item's record, not its
+// file, and without this the file stayed for good. Returns how many went.
+export const sweepPhotos = async (named, now = Date.now()) => {
+  if (IN_BROWSER || !IMAGE_DIR) {
+    return 0;
+  }
+  let removed = 0;
+  try {
+    for (const name of await FileSystem.readDirectoryAsync(IMAGE_DIR)) {
+      const uri = `${IMAGE_DIR}${name}`;
+      if (named.has(uri)) {
+        continue;
+      }
+      const info = await FileSystem.getInfoAsync(uri);
+      // Seconds, in this API.
+      if (info.exists && !info.isDirectory && now - info.modificationTime * 1000 > SWEEP_AFTER_MS) {
+        await FileSystem.deleteAsync(uri, { idempotent: true });
+        removed += 1;
+      }
+    }
+  } catch (e) {
+    // best effort: what's left goes next time
+  }
+  return removed;
+};
+
 // Best-effort delete of a persisted image (ignores anything we don't own). The
 // server sweeps its own photos once no kept copy names them.
 export const deleteImage = async (uri) => {
