@@ -221,13 +221,12 @@ export default function RoomScreen({ navigation, route }) {
     <EmptyState
       icon="magnify"
       title="Nothing by that name"
-      subtitle="Search looks through both types of item, in stock or not."
     />
   ) : allInRoom.length > 0 ? (
     <EmptyState
       icon="cart-outline"
       title="Nothing in stock"
-      subtitle={`${itemCount(outOfStock)} ran out. You'll find them on the Shopping tab.`}
+      subtitle={`${itemCount(outOfStock)} ran out`}
       actionLabel="Open Shopping"
       actionIcon="cart-outline"
       onAction={() => navigation.navigate("Shopping")}

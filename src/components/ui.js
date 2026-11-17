@@ -215,12 +215,6 @@ export function SectionLabel({ children, top = 20 }) {
   return <Text style={[styles.sectionLabel, { marginTop: top }]}>{children}</Text>;
 }
 
-// A grey explanation line under a group.
-export function FootNote({ children, style }) {
-  const { styles } = useStyles();
-  return <Text style={[styles.footNote, style]}>{children}</Text>;
-}
-
 // The big page title ("Food", "Settings") with actions on the right.
 export function PageTitle({ title, subtitle, actions }) {
   const { styles } = useStyles();
@@ -697,13 +691,6 @@ const createStyles = (colors) =>
       color: colors.textSecondary,
       marginLeft: 4,
       marginBottom: 10,
-    },
-    footNote: {
-      ...TYPE.caption,
-      color: colors.textSecondary,
-      marginHorizontal: 6,
-      marginTop: 8,
-      lineHeight: 17,
     },
     chip: {
       flexDirection: "row",

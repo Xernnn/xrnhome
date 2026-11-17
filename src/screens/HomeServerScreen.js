@@ -16,7 +16,6 @@ import { useTheme } from "../context/ThemeContext";
 import { describeSync, useSync } from "../context/SyncContext";
 import {
   Card,
-  FootNote,
   GroupCard,
   GroupRow,
   OutlinePill,
@@ -168,10 +167,7 @@ export default function HomeServerScreen({ navigation }) {
       >
         {!sync.available ? (
           <Card>
-            <Text style={styles.body}>
-              Syncing works in the phone app, and on the page your home server
-              serves.
-            </Text>
+            <Text style={styles.body}>Not available here</Text>
           </Card>
         ) : !sync.server ? (
           <>
@@ -213,11 +209,6 @@ export default function HomeServerScreen({ navigation }) {
                 style={styles.mainButton}
               />
             </Card>
-            <FootNote>
-              The home server keeps a copy of every item and its photo, and
-              hands out new builds of the app. The login is the one your other
-              xrn apps sync with.
-            </FootNote>
           </>
         ) : (
           <>
@@ -226,16 +217,16 @@ export default function HomeServerScreen({ navigation }) {
                 <Text style={styles.conflictTitle}>
                   {CONFLICT_TITLES[status.reason] || CONFLICT_TITLES.other}
                 </Text>
+                {Number.isFinite(status.serverCount) ? (
+                  <Text style={styles.body}>
+                    Server: {plural(status.serverCount)}
+                    {status.serverSavedAt
+                      ? ` · ${new Date(status.serverSavedAt).toLocaleString()}`
+                      : ""}
+                  </Text>
+                ) : null}
                 <Text style={styles.body}>
-                  {Number.isFinite(status.serverCount)
-                    ? `The server holds ${plural(status.serverCount)}${
-                        status.serverSavedAt
-                          ? ` from ${new Date(status.serverSavedAt).toLocaleString()}`
-                          : ""
-                      }. `
-                    : ""}
-                  This {deviceName} has {plural(items.length)}. Nothing syncs until
-                  you pick what to keep.
+                  This {deviceName}: {plural(items.length)}
                 </Text>
                 {error ? <Text style={styles.error}>{error}</Text> : null}
                 {canKeepBoth ? (
@@ -296,7 +287,7 @@ export default function HomeServerScreen({ navigation }) {
                 title={describeSync(status, sync.meta)}
                 subtitle={
                   sync.server.browser
-                    ? "This page comes from your home server"
+                    ? undefined
                     : `${sync.server.user} · ${sync.server.url.replace(/^https:\/\//, "")}`
                 }
               />
@@ -318,12 +309,6 @@ export default function HomeServerScreen({ navigation }) {
               disabled={busy || syncing}
               style={styles.secondButton}
             />
-            <FootNote>
-              Changes go up a few seconds after you make them, and when you
-              leave the app. Changes from your other device come down while
-              the app is open, and the two are merged. Restoring brings the server's copy
-              and its photos to this {deviceName}, in place of what's here.
-            </FootNote>
             {sync.server.browser ? null : (
               <View style={styles.disconnect}>
                 <TextButton label="Disconnect" danger onPress={confirmDisconnect} />

@@ -46,7 +46,6 @@ export default function EditItemScreen({ navigation, route }) {
         <EmptyState
           icon="alert-circle-outline"
           title="Item not found"
-          subtitle="This item may have been deleted."
         />
       </SafeAreaView>
     );

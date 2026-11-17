@@ -385,13 +385,7 @@ export default function ShoppingScreen({ navigation }) {
     <SafeAreaView style={styles.safe} edges={["top"]}>
       <PageTitle
         title="Shopping"
-        subtitle={
-          toBuy.length === 0 && cartCount === 0
-            ? "Nothing to buy right now"
-            : `${toBuy.length} to buy${
-                cartCount > 0 ? ` · ${cartCount} in the cart` : ""
-              }`
-        }
+        subtitle={`${toBuy.length} to buy${cartCount > 0 ? ` · ${cartCount} in the cart` : ""}`}
         actions={
           toBuy.length > 0 ? (
             <RoundIconButton
@@ -447,9 +441,7 @@ export default function ShoppingScreen({ navigation }) {
           <Text style={styles.sectionCountText}>{toBuy.length}</Text>
         </View>
         {toBuy.length === 0 && cartCount === 0 ? (
-          <Text style={styles.emptySection}>
-            Nothing to buy. Items on your list show up here when they run low.
-          </Text>
+          <Text style={styles.emptySection}>Nothing to buy</Text>
         ) : null}
         {renderGroup(toBuyInOrder, renderToBuyRow)}
 
@@ -480,10 +472,7 @@ export default function ShoppingScreen({ navigation }) {
             ))
           : null}
         {open.stocked && stocked.length === 0 ? (
-          <Text style={styles.emptySection}>
-            Turn on "When it's running low" for an item and it waits here
-            until it does.
-          </Text>
+          <Text style={styles.emptySection}>None</Text>
         ) : null}
 
         {renderSectionToggle("ranOut", "Ran out", ranOut.length)}
@@ -506,7 +495,7 @@ export default function ShoppingScreen({ navigation }) {
             ))
           : null}
         {open.ranOut && ranOut.length === 0 ? (
-          <Text style={styles.emptySection}>Nothing has run out.</Text>
+          <Text style={styles.emptySection}>None</Text>
         ) : null}
 
         <View style={styles.bottomSpacer} />

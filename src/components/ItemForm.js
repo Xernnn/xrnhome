@@ -327,7 +327,7 @@ export default function ItemForm({
   const confirmDelete = () => {
     Alert.alert(
       `Delete ${initial.name}?`,
-      "You'll get a few seconds to undo.",
+      undefined,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -347,7 +347,7 @@ export default function ItemForm({
     onOpenExisting(item);
   };
 
-  const switchLine = (label, value, onValueChange, subtitle, first = false) => (
+  const switchLine = (label, value, onValueChange, first = false) => (
     <>
       {first ? null : <Hairline inset={0} />}
       <TouchableOpacity
@@ -357,7 +357,6 @@ export default function ItemForm({
       >
         <View style={styles.flex}>
           <Text style={styles.lineTitle}>{label}</Text>
-          {subtitle ? <Text style={styles.lineSubtitle}>{subtitle}</Text> : null}
         </View>
         <XSwitch value={value} onValueChange={onValueChange} />
       </TouchableOpacity>
@@ -581,12 +580,7 @@ export default function ItemForm({
               </View>
             ) : null}
             <View style={styles.lines}>
-              {switchLine(
-                "Track in %",
-                openedEnabled,
-                setOpenedEnabled,
-                "For things you use a bit at a time, like a bottle of oil"
-              )}
+              {switchLine("Track in %", openedEnabled, setOpenedEnabled)}
               {openedEnabled
                 ? stepperLine(
                     "Open one",
@@ -602,23 +596,11 @@ export default function ItemForm({
                   )
                 : null}
             </View>
-            {openedEnabled ? (
-              <Text style={styles.note}>
-                The open one is part of the count above. Minus takes {OPENED_STEP}%
-                of it at a time.
-              </Text>
-            ) : null}
           </FormSection>
 
           <FormSection title="When should it go on the shopping list?">
             <View style={styles.linesFirst}>
-              {switchLine(
-                "When it's running low",
-                recurring,
-                setRecurring,
-                "For things you always buy again",
-                true
-              )}
+              {switchLine("When it's running low", recurring, setRecurring, true)}
               {recurring
                 ? stepperLine(
                     "With this many left",
@@ -633,12 +615,7 @@ export default function ItemForm({
                   )
                 : null}
               {recurring && openedEnabled
-                ? switchLine(
-                    "Also look at the open one",
-                    watchOpen,
-                    setWatchOpen,
-                    "How much is left in the one you're using"
-                  )
+                ? switchLine("Also look at the open one", watchOpen, setWatchOpen)
                 : null}
               {recurring && openedEnabled && watchOpen
                 ? stepperLine(
@@ -665,16 +642,14 @@ export default function ItemForm({
                 />
               </View>
             ) : null}
-            <Text style={styles.note}>
-              {recurring
-                ? `Goes on the list ${describeRestockRule(rule)}.`
-                : "When it runs out it waits under Ran out on the Shopping tab."}
-            </Text>
+            {recurring ? (
+              <Text style={styles.note}>Goes on the list {describeRestockRule(rule)}</Text>
+            ) : null}
           </FormSection>
 
           <FormSection title="Does it expire?">
             <View style={styles.linesFirst}>
-              {switchLine("Expiry date", expiryEnabled, toggleExpiry, null, true)}
+              {switchLine("Expiry date", expiryEnabled, toggleExpiry, true)}
             </View>
             {expiryEnabled ? (
               <TouchableOpacity

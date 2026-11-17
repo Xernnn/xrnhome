@@ -129,7 +129,7 @@ export default function QuickAdd({ room, nameRef, onMore }) {
           <button
             type="button"
             className="dk-add-details"
-            title="Add a photo, an expiry date, a note"
+            title="More details"
             onClick={() => onMore({ room, category: target, name: name.trim() })}
           >
             More…
