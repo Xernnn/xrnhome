@@ -14,7 +14,6 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useInventory } from "../context/InventoryContext";
 import { useTheme } from "../context/ThemeContext";
 import {
-  FootNote,
   GroupCard,
   GroupRow,
   RoundIconButton,
@@ -124,12 +123,7 @@ export default function CategoriesScreen({ navigation }) {
               ))}
             </GroupCard>
           </>
-        ) : (
-          <FootNote>
-            The built-in categories always stay. Yours show up after them when
-            you add or edit an item.
-          </FootNote>
-        )}
+        ) : null}
       </ScrollView>
     </SafeAreaView>
   );

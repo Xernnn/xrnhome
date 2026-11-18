@@ -8,6 +8,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useInventory } from "../context/InventoryContext";
 import { useTheme } from "../context/ThemeContext";
 import { deviceName } from "../utils/homeServer";
+import { setAsideItems } from "../utils/storage";
 import { useSync } from "../context/SyncContext";
 import { Card, OutlinePill, PillButton, TextButton } from "../components/ui";
 import { SPACING, TYPE, itemCount } from "../utils/constants";
@@ -47,7 +48,13 @@ export default function DataProblemScreen() {
         {
           text: "Start over",
           style: "destructive",
-          onPress: () => replaceAllItems([], undefined),
+          onPress: () =>
+            run(async () => {
+              if (!(await setAsideItems())) {
+                throw new Error("Couldn't set the items aside. Nothing changed.");
+              }
+              replaceAllItems([], undefined);
+            }),
         },
       ]
     );
@@ -58,10 +65,6 @@ export default function DataProblemScreen() {
       <View style={styles.content}>
         <Card>
           <Text style={styles.title}>Your items couldn't be read</Text>
-          <Text style={styles.body}>
-            Nothing has been deleted or overwritten. Try again first: this is
-            sometimes just the {deviceName} being busy.
-          </Text>
           {error ? <Text style={styles.error}>{error}</Text> : null}
           <PillButton
             label={busy ? "Working" : "Try again"}
@@ -103,11 +106,6 @@ const createStyles = (colors) =>
       ...TYPE.title,
       color: colors.textPrimary,
       marginBottom: 8,
-    },
-    body: {
-      ...TYPE.bodySmall,
-      color: colors.textPrimary,
-      lineHeight: 20,
     },
     error: {
       ...TYPE.caption,

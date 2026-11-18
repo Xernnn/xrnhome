@@ -7,7 +7,6 @@ import { useTheme } from "../context/ThemeContext";
 import { describeSync, useSync } from "../context/SyncContext";
 import { useReminders } from "../context/RemindersContext";
 import {
-  FootNote,
   GroupCard,
   GroupRow,
   PageTitle,
@@ -30,25 +29,25 @@ const THEME_OPTIONS = [
 const updateLine = (update) => {
   switch (update.state) {
     case "checking":
-      return "Looking for a new build…";
+      return "Checking…";
     case "downloading":
       return `Downloading build ${update.info.versionCode}… ${Math.round(
         (update.progress || 0) * 100
       )}%`;
     case "available":
-      return `Build ${update.info.versionCode} is out${
+      return `Build ${update.info.versionCode}${
         Number.isFinite(update.info.size)
-          ? ` (${Math.round(update.info.size / 1000000)} MB)`
+          ? ` · ${Math.round(update.info.size / 1000000)} MB`
           : ""
-      }. It waits for Wi-Fi, or tap to download`;
+      }`;
     case "ready":
-      return `Build ${update.info.versionCode} is ready to install`;
+      return `Build ${update.info.versionCode}`;
     case "none":
       return "Up to date";
     case "error":
       return update.message;
     default:
-      return "Checks the home server every few hours";
+      return undefined;
   }
 };
 
@@ -70,7 +69,7 @@ export default function SettingsScreen({ navigation }) {
       return;
     }
     if (items.length === 0) {
-      Alert.alert("Nothing to export", "Add some items first.");
+      Alert.alert("Nothing to export");
       return;
     }
     setBusy(true);
@@ -79,7 +78,7 @@ export default function SettingsScreen({ navigation }) {
       haptics.success();
     } catch (error) {
       console.error("Export failed:", error);
-      Alert.alert("Export failed", "Couldn't export your data. Please try again.");
+      Alert.alert("Export failed");
     } finally {
       setBusy(false);
     }
@@ -124,10 +123,7 @@ export default function SettingsScreen({ navigation }) {
       );
     } catch (error) {
       console.error("Import failed:", error);
-      Alert.alert(
-        "Import failed",
-        "That file couldn't be read as an xrnhome backup."
-      );
+      Alert.alert("Import failed", "Not an xrnhome backup.");
     } finally {
       setBusy(false);
     }
@@ -189,7 +185,7 @@ export default function SettingsScreen({ navigation }) {
             subtitle={
               sync.available
                 ? describeSync(sync.status, sync.meta)
-                : "Works in the phone app"
+                : "Not available here"
             }
             onPress={() => navigation.navigate("HomeServer")}
           />
@@ -211,10 +207,6 @@ export default function SettingsScreen({ navigation }) {
             />
           ) : null}
         </GroupCard>
-        <FootNote>
-          The home server keeps a copy of your items and photos, shares them
-          between your phone and laptop, and hands out new builds of the app.
-        </FootNote>
 
         <SectionLabel>Items</SectionLabel>
         <GroupCard>
@@ -223,7 +215,6 @@ export default function SettingsScreen({ navigation }) {
               first
               icon="bell-outline"
               title="Expiry reminders"
-              subtitle="A notification before things expire, and on the day"
               value={reminders.enabled}
               onValueChange={handleReminders}
             />
@@ -232,11 +223,7 @@ export default function SettingsScreen({ navigation }) {
             first={!reminders.supported}
             icon="tag-multiple-outline"
             title="Your categories"
-            subtitle={
-              categories.length > 0
-                ? `${categories.length} of your own`
-                : "Add your own next to the built-in ones"
-            }
+            subtitle={categories.length > 0 ? `${categories.length} of your own` : undefined}
             onPress={() => navigation.navigate("Categories")}
           />
         </GroupCard>
@@ -251,23 +238,16 @@ export default function SettingsScreen({ navigation }) {
                 first
                 icon="export-variant"
                 title="Export data"
-                subtitle="Save everything to a JSON file"
                 onPress={handleExport}
                 disabled={busy}
               />
               <GroupRow
                 icon="import"
                 title="Import data"
-                subtitle="Replace everything with a backup"
                 onPress={handleImport}
                 disabled={busy}
               />
             </GroupCard>
-            <FootNote>
-              {sync.server
-                ? "Backup files have no photos. The home server keeps those."
-                : "Backup files have no photos, so they only live on this phone until you connect a home server."}
-            </FootNote>
           </>
         )}
 

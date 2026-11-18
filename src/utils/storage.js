@@ -147,6 +147,28 @@ export const loadItems = async () => {
   return { status: "recovered", items };
 };
 
+// Before the items are started over: copies the saved text to where unreadable
+// items are kept (DAMAGED_KEY, or beside it when that holds another copy), so
+// the empty list goes only over text that is also somewhere else. The text may
+// never have got there: a read that failed outright sets nothing aside. False
+// when it can't be read or copied, and then nothing may be written over it.
+export const setAsideItems = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(STORAGE_KEY);
+    if (raw == null) {
+      return true;
+    }
+    const kept = await AsyncStorage.getItem(DAMAGED_KEY);
+    if (kept !== raw) {
+      await AsyncStorage.setItem(kept == null ? DAMAGED_KEY : `${DAMAGED_KEY}_${Date.now()}`, raw);
+    }
+    return true;
+  } catch (error) {
+    console.error("Failed to set the items aside:", error);
+    return false;
+  }
+};
+
 // The items as saveItems saves them, for saving them in one go with something else.
 export const itemsEntry = (items) => [
   STORAGE_KEY,

@@ -2,7 +2,7 @@
   "expo": {
     "name": "xrnhome",
     "slug": "xrnhome",
-    "version": "1.2.1",
+    "version": "1.2.2",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -28,7 +28,7 @@
         "android.permission.REQUEST_INSTALL_PACKAGES"
       ],
       "package": "com.xern.xrnhome",
-      "versionCode": 9,
+      "versionCode": 10,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundImage": "./assets/adaptive-icon-background.png",

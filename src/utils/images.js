@@ -39,10 +39,22 @@ const ensureDir = async () => {
   }
 };
 
+// A photo file of ours: one plain name straight inside our folder. A prefix
+// alone would let ".../xrnhome_images/../../databases/RKStorage" (from a backup
+// file made to do it) count as ours, to be deleted with its item and uploaded
+// as a photo.
 export const isPersistedImage = (uri) =>
-  !!uri &&
+  typeof uri === "string" &&
   !!IMAGE_DIR &&
-  (uri.startsWith(IMAGE_DIR) || uri.startsWith(LEGACY_IMAGE_DIR));
+  [IMAGE_DIR, LEGACY_IMAGE_DIR].some(
+    (dir) => !!dir && uri.startsWith(dir) && isSafePhotoName(uri.slice(dir.length))
+  );
+
+// An imported backup's photo path, if it's one of ours: anything else on the
+// phone isn't the backup's to point at. Other kinds of address are left to
+// normalizeItem.
+export const importedImageUri = (uri) =>
+  typeof uri === "string" && /^file:/i.test(uri) && !isPersistedImage(uri) ? null : uri;
 
 // The picked image's size. Asked for with callbacks, which every platform takes:
 // in the browser Image.getSize returns nothing to wait for, and calls its
@@ -103,7 +115,9 @@ const uploadFromBrowser = async (uri) => {
 };
 
 // Copies a picked image URI into persistent storage, shrinking it if it's large;
-// returns the new stable URI.
+// returns the new stable URI. Throws when the copy fails, so the form stays open
+// with the photo: the picker's own copy sits in a cache the system empties, and
+// the server never gets it.
 export const persistImage = async (uri) => {
   if (!uri || !IMAGE_DIR) {
     return uri ?? null;
@@ -124,8 +138,8 @@ export const persistImage = async (uri) => {
     await FileSystem.copyAsync({ from: source, to: dest });
     return dest;
   } catch (e) {
-    console.error("Failed to persist image, using original URI:", e);
-    return uri;
+    console.error("Failed to persist image:", e);
+    throw new Error("The photo couldn't be saved.");
   }
 };
 
@@ -147,6 +161,37 @@ export const photoPath = (name) =>
   IMAGE_DIR && isSafePhotoName(name) ? `${IMAGE_DIR}${name}` : null;
 
 export const ensureImageDir = ensureDir;
+
+// A photo file this new is never swept: it may be one just picked in a form
+// that isn't saved yet, or one a restore is still fetching.
+const SWEEP_AFTER_MS = 24 * 3600 * 1000;
+
+// Deletes the photos in our folder that nothing names any more (`named`, a Set
+// of paths): a sync, a restore or an import drops an item's record, not its
+// file, and without this the file stayed for good. Returns how many went.
+export const sweepPhotos = async (named, now = Date.now()) => {
+  if (IN_BROWSER || !IMAGE_DIR) {
+    return 0;
+  }
+  let removed = 0;
+  try {
+    for (const name of await FileSystem.readDirectoryAsync(IMAGE_DIR)) {
+      const uri = `${IMAGE_DIR}${name}`;
+      if (named.has(uri)) {
+        continue;
+      }
+      const info = await FileSystem.getInfoAsync(uri);
+      // Seconds, in this API.
+      if (info.exists && !info.isDirectory && now - info.modificationTime * 1000 > SWEEP_AFTER_MS) {
+        await FileSystem.deleteAsync(uri, { idempotent: true });
+        removed += 1;
+      }
+    }
+  } catch (e) {
+    // best effort: what's left goes next time
+  }
+  return removed;
+};
 
 // Best-effort delete of a persisted image (ignores anything we don't own). The
 // server sweeps its own photos once no kept copy names them.

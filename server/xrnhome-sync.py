@@ -21,7 +21,8 @@ sync password.
                               412 if the copy here isn't the one the device last saw.
                               X-Write-Id: an id the device picked for this write (optional)
     GET  /photos              the names of the photos kept here, as a JSON list
-    PUT  /photos/<name>       a photo's bytes
+    PUT  /photos/<name>       a photo's bytes; 507 once the user's photos would pass MAX_PHOTOS
+                              or MAX_PHOTOS_BYTES
     GET  /photos/<name>       a photo
     GET  /health              200 "ok", no login (for monitoring)
     GET  /update/<file>       releases from scripts/release.mjs, in <data>/update: app.json and
@@ -59,7 +60,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 MAX_BODY = 8 * 1024 * 1024
 MAX_PHOTO = 15 * 1024 * 1024
+# One user's photos, all told. Each copy of the items is capped (MAX_BODY, and only so many are
+# kept), but photos weren't: a client could fill the disk every other service on the phone shares.
+MAX_PHOTOS = 5000
+MAX_PHOTOS_BYTES = 1024 * 1024 * 1024
 FAIL_DELAY_S = 2  # after a wrong password, as Radicale does
+MAX_HELD = 8  # wrong logins held for FAIL_DELAY_S at once; any more are answered at once
 AUTH_CACHE_S = 600  # a bcrypt check costs ~0.3s on a phone; don't pay it per request
 FAIL_LIMIT = 10  # different wrong logins from one address within FAIL_WINDOW_S, then 429 until they age out
 FAIL_WINDOW_S = 15 * 60
@@ -123,7 +129,11 @@ lock = threading.Lock()  # state.json, history/ and daily/
 photo_lock = threading.Lock()
 auth_cache = {}  # sha256(user:password) -> (user, expires, users-file mtime)
 fail_lock = threading.Lock()
-failures = {}  # client address -> {sha256 of a wrong Authorization: monotonic time it last came}
+fail_settled = threading.Condition(fail_lock)  # a login being checked has been settled
+# client address -> {sha256 of a wrong Authorization: (monotonic time it last came, user name it tried)}
+failures = {}
+checking = {}  # client address -> how many of its logins are being checked right now
+held = threading.BoundedSemaphore(MAX_HELD)
 pruned = {}  # user -> time.monotonic() of the last photo sweep
 
 
@@ -134,15 +144,30 @@ def users_mtime():
         return 0
 
 
-def check_login(header):
-    """The user name for a valid `Authorization: Basic ...`, else None."""
+def basic_login(header):
+    """(user, password) from `Authorization: Basic ...`, or (None, None)."""
     if not header or not header.startswith("Basic "):
-        return None
+        return None, None
     try:
         user, _, password = base64.b64decode(header[6:]).decode("utf-8").partition(":")
     except Exception:
+        return None, None
+    return user, password
+
+
+def cached_login(header):
+    """The user name for a login already found right (the auth cache), else None: no check."""
+    user, password = basic_login(header)
+    if user is None:
         return None
-    if not USER_NAME.fullmatch(user):  # it names a folder here
+    hit = auth_cache.get(hashlib.sha256(f"{user}:{password}".encode()).hexdigest())
+    return hit[0] if hit and hit[1] > time.time() and hit[2] == users_mtime() else None
+
+
+def check_login(header):
+    """The user name for a valid `Authorization: Basic ...`, else None."""
+    user, password = basic_login(header)
+    if user is None or not USER_NAME.fullmatch(user):  # it names a folder here
         return None
     key = hashlib.sha256(f"{user}:{password}".encode()).hexdigest()
     mtime = users_mtime()
@@ -215,35 +240,81 @@ def host_key(host):
     return host.strip().lower().removesuffix(":443").removesuffix(":80")
 
 
-def locked_out(addr, header=None):
-    """Whether the address has used up its wrong logins. A try that isn't turned away takes its
-    place in the count here, before its login is checked. Counted only once it had failed, a burst
-    of guesses sent at the same moment was all still under the limit when it arrived, and every one
-    of them got checked. A right login clears the count, its own place in it included."""
-    now = time.monotonic()
+def recent_failures(addr, now):
+    """This address's wrong logins within FAIL_WINDOW_S; older ones are forgotten. Under fail_lock."""
+    recent = {k: f for k, f in failures.get(addr, {}).items() if now - f[0] < FAIL_WINDOW_S}
+    if recent:
+        failures[addr] = recent
+    else:
+        failures.pop(addr, None)
+    return recent
+
+
+def locked_out(addr):
+    """Whether the address has used up its wrong logins."""
     with fail_lock:
-        recent = {k: t for k, t in failures.get(addr, {}).items() if now - t < FAIL_WINDOW_S}
-        full = len(recent) >= FAIL_LIMIT
-        if header and not full:
-            recent[hashlib.sha256(header.encode()).hexdigest()] = now
-        if recent:
-            failures[addr] = recent
-        else:
-            failures.pop(addr, None)
-        return full
+        return len(recent_failures(addr, time.monotonic())) >= FAIL_LIMIT
 
 
-def note_failure(addr, header):
-    """Counts a wrong login against the address. The same one again counts once: that's a device
-    still sending the password from before it was changed, not someone guessing, and counting each
-    of its tries would lock the address out, which behind Funnel can be the whole household's."""
-    now = time.monotonic()
+def reserve_guess(addr, header):
+    """Waits for a place to check a login from this address in; False once the address has used up
+    its wrong logins. A login being checked holds a place until settle_guess: counted only once
+    they had failed, a burst of guesses sent at the same moment was all still under the limit when
+    it arrived, and every one of them got checked. It isn't a wrong login, though: one that finds
+    no place waits for it to be settled rather than being turned away, so two devices signing in at
+    once never lock each other out. A wrong login sent again needs no place, since it is counted
+    already (see settle_guess)."""
     key = hashlib.sha256(header.encode()).hexdigest()
-    with fail_lock:
+    with fail_settled:
+        now = time.monotonic()
         if len(failures) > 10000:  # a flood from many addresses: forget the stale ones
-            for a in [a for a, ts in failures.items() if now - max(ts.values(), default=0) >= FAIL_WINDOW_S]:
+            for a in [a for a, fs in failures.items() if now - max((f[0] for f in fs.values()), default=0) >= FAIL_WINDOW_S]:
                 del failures[a]
-        failures.setdefault(addr, {})[key] = now
+        while True:
+            recent = recent_failures(addr, time.monotonic())
+            if len(recent) >= FAIL_LIMIT:
+                return False
+            if key in recent or len(recent) + checking.get(addr, 0) < FAIL_LIMIT:
+                checking[addr] = checking.get(addr, 0) + 1
+                return True
+            fail_settled.wait(1)
+
+
+def settle_guess(addr, header, right):
+    """A login reserve_guess let through has been checked. A wrong one counts against the address,
+    under the name it tried; the same one again counts once: that's a device still sending the
+    password from before it was changed, not someone guessing, and counting each of its tries
+    would lock the address out, which behind Funnel can be the whole household's. A right one
+    clears that name's mistakes from this address, and no one else's: a device signing in mustn't
+    give a guesser behind the same address its guesses back. None (a login already found right, a
+    check that broke) settles nothing."""
+    name = (basic_login(header)[0] or "")[:64]
+    with fail_settled:
+        left = checking.get(addr, 1) - 1
+        if left > 0:
+            checking[addr] = left
+        else:
+            checking.pop(addr, None)
+        if right is False:
+            failures.setdefault(addr, {})[hashlib.sha256(header.encode()).hexdigest()] = (time.monotonic(), name)
+        elif right:
+            kept = {k: f for k, f in failures.get(addr, {}).items() if f[1] != name}
+            if kept:
+                failures[addr] = kept
+            else:
+                failures.pop(addr, None)
+        fail_settled.notify_all()
+
+
+def hold_wrong_login():
+    """Holds the answer to a wrong login FAIL_DELAY_S, to slow a guesser down. Each held answer is a
+    thread, and many connections each sending a bad password parked one apiece on the old phone,
+    so at most MAX_HELD are held at a time; past that the lockout is what stops a guesser."""
+    if held.acquire(blocking=False):
+        try:
+            time.sleep(FAIL_DELAY_S)
+        finally:
+            held.release()
 
 
 def user_dir(user, *parts):
@@ -258,8 +329,50 @@ def read_doc(path):
         return None
 
 
+def is_state(doc):
+    return isinstance(doc, dict) and type(doc.get("version")) is int
+
+
+def newest_kept(user):
+    """The newest copy history/ or daily/ keeps, or None."""
+    for sub, pattern, key in (("history", r"\d+\.json", lambda n: int(n[:-5])),
+                              ("daily", r"\d{4}-\d{2}-\d{2}\.json", lambda n: n)):
+        d = user_dir(user, sub)
+        names = [n for n in os.listdir(d) if re.fullmatch(pattern, n)] if os.path.isdir(d) else []
+        for n in sorted(names, key=key, reverse=True):
+            doc = read_doc(os.path.join(d, n))
+            if is_state(doc):
+                return doc
+    return None
+
+
 def read_state(user):
-    return read_doc(user_dir(user, "state.json")) or {"version": 0, "data": {}}
+    """The user's copy: {"version", "updated", "by", "writes", "data"}, version 0 while there is
+    none. Under `lock`. One that can't be read (a damaged disk) used to read as "version 0, empty":
+    the version count started again, and the next writes took the numbers of the kept copies in
+    history/. It is moved aside now, said in the log, and the newest kept copy put in its place,
+    older than what the devices have seen, so each of them asks before it follows."""
+    path = user_dir(user, "state.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            doc = json.load(f)
+    except FileNotFoundError:
+        return {"version": 0, "data": {}}
+    except (OSError, ValueError):
+        doc = None
+    if is_state(doc):
+        return doc
+    aside = f"{path}.damaged-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ')}"
+    try:
+        os.replace(path, aside)
+    except OSError:
+        aside = path
+    kept = newest_kept(user)
+    if kept and aside != path:  # never over the only copy of what couldn't be read
+        write_json(path, kept)
+    sys.stderr.write(f"{user}: state.json can't be read; kept as {os.path.basename(aside)}, "
+                     f"and version {kept['version'] if kept else 0} put in its place\n")
+    return kept or {"version": 0, "data": {}}
 
 
 def write_json(path, doc):
@@ -299,31 +412,66 @@ def photos_named(doc):
     return {i["photo"] for i in items if isinstance(i, dict) and isinstance(i.get("photo"), str)}
 
 
+def file_stamp(path):
+    """What changes whenever the file is written again (they're swapped in by rename), or None."""
+    try:
+        st = os.stat(path)
+        return st.st_ino, st.st_mtime_ns, st.st_size
+    except OSError:
+        return None
+
+
 def prune_photos(user, force=False):
-    """Deletes the photos that no kept copy names (and that aren't brand new)."""
+    """Deletes the photos that no kept copy names (and that aren't brand new). The copies, up to
+    eighty of them, are read without `lock`, which every other read and write of this user's waits
+    for: each is swapped in whole by rename, so a read gets one version or another. A write that
+    lands meanwhile may name a photo they didn't, so then nothing is deleted: the next sweep goes
+    by the copies as they are then."""
     if not force and time.monotonic() - pruned.get(user, -PRUNE_EVERY_S) < PRUNE_EVERY_S:
         return
     pruned[user] = time.monotonic()
     folder = user_dir(user, "photos")
     if not os.path.isdir(folder):
         return
-    with lock:
-        named = photos_named(read_state(user))
-        for sub in ("history", "daily"):
-            d = user_dir(user, sub)
-            if os.path.isdir(d):
-                for n in os.listdir(d):
-                    if n.endswith(".json"):
-                        named |= photos_named(read_doc(os.path.join(d, n)))
+    state = user_dir(user, "state.json")
+    seen = file_stamp(state)
+    named = photos_named(read_doc(state))
+    for sub in ("history", "daily"):
+        d = user_dir(user, sub)
+        if os.path.isdir(d):
+            for n in os.listdir(d):
+                if n.endswith(".json"):
+                    named |= photos_named(read_doc(os.path.join(d, n)))
     now = time.time()
-    with photo_lock:
-        for n in os.listdir(folder):
-            path = os.path.join(folder, n)
-            try:
-                if n not in named and now - os.stat(path).st_mtime > PHOTO_GRACE_S:
-                    os.remove(path)
-            except OSError:
-                pass
+    with lock:
+        if file_stamp(state) != seen:
+            return
+        with photo_lock:
+            for n in os.listdir(folder):
+                path = os.path.join(folder, n)
+                try:
+                    if n not in named and now - os.stat(path).st_mtime > PHOTO_GRACE_S:
+                        os.remove(path)
+                except OSError:
+                    pass
+
+
+def photos_in_use(folder, replacing):
+    """(how many, bytes) of the photos in `folder`, apart from `replacing`, which an upload is
+    about to take the place of. Uploads still on their way (dot files) don't count."""
+    count = size = 0
+    try:
+        with os.scandir(folder) as entries:
+            for e in entries:
+                if e.name != replacing and PHOTO_NAME.fullmatch(e.name):
+                    try:
+                        size += e.stat().st_size
+                        count += 1
+                    except OSError:
+                        pass
+    except OSError:
+        pass
+    return count, size
 
 
 def etag_version(header):
@@ -409,22 +557,31 @@ class Handler(BaseHTTPRequestHandler):
 
     def login(self):
         addr = client_address(self)
-        if locked_out(addr, self.headers.get("Authorization")):
-            if self.headers.get("Authorization"):
-                time.sleep(FAIL_DELAY_S)
+        header = self.headers.get("Authorization")
+        # A login holds a place in the count while it is checked (reserve_guess).
+        # Turned away unchecked, a login guesses nothing, so its 429 isn't held.
+        if not (reserve_guess(addr, header) if header else not locked_out(addr)):
             self.send(429, "too many wrong passwords; try again later",
                       headers={"Retry-After": str(FAIL_WINDOW_S)})
             return None
-        user = check_login(self.headers.get("Authorization"))
+        user, right = None, None
+        if header:
+            try:
+                # A login already found right is a device syncing, not someone signing in, and
+                # settles nothing: one sending its password with every request cleared the count
+                # for its whole address, so a guesser behind the same one never ran out of guesses.
+                user = cached_login(header)
+                if not user:
+                    user = check_login(header)
+                    right = bool(user)
+            finally:
+                settle_guess(addr, header, right)
         if not user:
             # A request with no password guessed nothing, and needn't hold a thread for it.
-            if self.headers.get("Authorization"):
-                note_failure(addr, self.headers.get("Authorization"))
-                time.sleep(FAIL_DELAY_S)
+            if header:
+                hold_wrong_login()
             self.send(401, "login required", headers={"WWW-Authenticate": 'Basic realm="xrnhome"'})
             return None
-        with fail_lock:
-            failures.pop(addr, None)
         return user
 
     def do_GET(self):
@@ -525,6 +682,9 @@ class Handler(BaseHTTPRequestHandler):
         if length is None:
             return
         folder = user_dir(user, "photos")
+        count, size = photos_in_use(folder, name)
+        if count >= MAX_PHOTOS or size + length > MAX_PHOTOS_BYTES:
+            return self.send(507, "no room for more photos")
         os.makedirs(folder, exist_ok=True)
         tmp = os.path.join(folder, f".{name}.{threading.get_ident()}.part")
         left = length

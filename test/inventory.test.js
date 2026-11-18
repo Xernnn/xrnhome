@@ -95,6 +95,28 @@ describe("counting", () => {
     expect(state.items[0]).toMatchObject({ quantity: 2, openedPercent: 10 });
   });
 
+  it("Undo after a sync puts back what the change did, onto what the other device did", () => {
+    const expiry = dayFromNow(10);
+    const milk = make({ quantity: 1, expiryDate: expiry, updatedAt: "2026-11-05T09:00:00.000Z" });
+    let state = start(milk);
+    state = step(state, "a", -1);
+    expect(state.undo.type).toBe("change");
+    // Before Undo is tapped, the laptop's "bought 3", with a note, comes down.
+    const theirs = [{ ...milk, quantity: 4, note: "top shelf", updatedAt: "2026-11-05T10:00:01.000Z" }];
+    state = reducer(state, { type: ACTIONS.MERGE_SERVER, payload: { base: [milk], theirs } });
+    expect(state.items[0]).toMatchObject({ quantity: 3, note: "top shelf" });
+    const later = "2026-11-05T10:00:03.000Z";
+    state = reducer(state, { type: ACTIONS.RESTORE_ITEM, payload: { now: later } });
+    expect(state.items[0]).toMatchObject({
+      quantity: 4,
+      note: "top shelf",
+      expiryDate: new Date(expiry).toISOString(),
+      updatedAt: later,
+    });
+    expect(state.items[0].history.map((entry) => entry.action)).not.toContain("Used the last unit");
+    expect(state.undo).toBeNull();
+  });
+
   it("doesn't let Undo bring back a second copy of an item a sync brought back", () => {
     const milk = make({ quantity: 3 });
     let state = start(milk);
@@ -115,6 +137,24 @@ describe("counting", () => {
     state = { ...state, items: [make({ id: "b", quantity: 5, mergedFrom: ["a"] })] };
     state = reducer(state, { type: ACTIONS.RESTORE_ITEM });
     expect(state.items.map((item) => item.id)).toEqual(["b"]);
+  });
+});
+
+describe("a stored photo path", () => {
+  it.each([
+    "file:///docs/xrnhome_images/../../databases/RKStorage",
+    "file:///docs/xrnhome_images/%2E%2E/x.jpg",
+    "/xrnhome/photos/a/../../state",
+  ])("that climbs out of its folder is dropped: %s", (imageUri) => {
+    expect(make({ imageUri }).imageUri).toBeNull();
+  });
+
+  it.each([
+    "file:///docs/xrnhome_images/1731-abc.jpg",
+    "content://com.android.providers.media.documents/document/image%3A12",
+    "/xrnhome/photos/1731-abc.jpg",
+  ])("that stays put is kept: %s", (imageUri) => {
+    expect(make({ imageUri }).imageUri).toBe(imageUri);
   });
 });
 

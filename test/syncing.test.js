@@ -12,6 +12,7 @@ import { ThemeProvider } from "../src/context/ThemeContext";
 import { InventoryProvider, useInventory } from "../src/context/InventoryContext";
 import { SyncProvider, useSync } from "../src/context/SyncContext";
 import EditItemScreen from "../src/screens/EditItemScreen";
+import DataProblemScreen from "../src/screens/DataProblemScreen";
 
 jest.mock("@react-native-async-storage/async-storage", () =>
   require("@react-native-async-storage/async-storage/jest/async-storage-mock")
@@ -31,6 +32,7 @@ jest.mock("expo-file-system/legacy", () => ({
   moveAsync: jest.fn(async () => {}),
   uploadAsync: jest.fn(async () => ({ status: 201 })),
   downloadAsync: jest.fn(async () => ({ status: 404 })),
+  readDirectoryAsync: jest.fn(async () => []),
   FileSystemUploadType: { BINARY_CONTENT: 0 },
 }));
 jest.mock("expo-image-manipulator", () => ({}));
@@ -174,10 +176,12 @@ beforeEach(async () => {
   server = makeServer();
   global.fetch = server.fetch;
   SecureStore.getItemAsync.mockResolvedValue(
-    JSON.stringify({ url: URL, user: "sonn", password: "secret" })
+    JSON.stringify({ url: URL, user: "alex", password: "secret" })
   );
   AppState.currentState = "active";
   FileSystem.downloadAsync.mockImplementation(async () => ({ status: 404 }));
+  FileSystem.getInfoAsync.mockImplementation(async () => ({ exists: false }));
+  FileSystem.readDirectoryAsync.mockImplementation(async () => []);
   appStateListeners = new Set();
   AppState.addEventListener.mockImplementation((type, listener) => {
     appStateListeners.add(listener);
@@ -264,6 +268,83 @@ describe("a list that had to be recovered", () => {
   });
 });
 
+describe("a list that couldn't be read at all", () => {
+  const DAMAGED_KEY = "xrnhome_items_damaged";
+  const saved = JSON.stringify([{ id: "a", name: "Milk" }, { id: "b", name: "Rice" }]);
+
+  // The read of the items fails (`failing()` says whether it does now), then
+  // Start over is picked on the screen that shows.
+  const startOverWhile = async (failing) => {
+    SecureStore.getItemAsync.mockResolvedValue(null);
+    await AsyncStorage.setItem(ITEMS_KEY, saved);
+    const read = AsyncStorage.getItem.getMockImplementation();
+    AsyncStorage.getItem.mockImplementation((key, ...rest) =>
+      key === ITEMS_KEY && failing() ? Promise.reject(new Error("busy")) : read(key, ...rest)
+    );
+    try {
+      await launch();
+      expect(app.inventory.problem).toEqual({ type: "unreadable" });
+      await act(async () => {
+        showScreen(<DataProblemScreen />);
+      });
+      const [startOver] = renderer.root.findAll(
+        (node) => node.props.label === "Start over" && typeof node.props.onPress === "function"
+      );
+      await act(async () => startOver.props.onPress());
+      const [, , choices] = Alert.alert.mock.calls.at(-1);
+      await act(async () => {
+        await choices.find((choice) => choice.text === "Start over").onPress();
+      });
+      await wait(0);
+    } finally {
+      AsyncStorage.getItem.mockImplementation(read);
+    }
+  };
+
+  it("sets the saved text aside before starting over, as the question says", async () => {
+    let reads = 0;
+    await startOverWhile(() => (reads += 1) === 1);
+    expect(app.inventory.problem).toBeNull();
+    expect(await AsyncStorage.getItem(DAMAGED_KEY)).toBe(saved);
+    expect(await AsyncStorage.getItem(ITEMS_KEY)).toBe("[]");
+  });
+
+  it("writes nothing over the items while they still can't be read", async () => {
+    await startOverWhile(() => true);
+    expect(app.inventory.problem).toEqual({ type: "unreadable" });
+    expect(await AsyncStorage.getItem(ITEMS_KEY)).toBe(saved);
+  });
+});
+
+describe("photos of items a sync took away", () => {
+  it("go from the phone at the next launch", async () => {
+    const dir = "file:///docs/xrnhome_images/";
+    await launch();
+    await act(async () => {
+      app.inventory.addItem({ name: "Milk", room: "food", category: "Cupboard", quantity: 1, imageUri: `${dir}milk.jpg` });
+      app.inventory.addItem({ name: "Rice", room: "food", category: "Cupboard", quantity: 1, imageUri: `${dir}rice.jpg` });
+    });
+    await wait(16000);
+    // The laptop deletes the rice, and that comes down here.
+    server.doc = { ...server.doc, items: server.doc.items.filter((item) => item.name !== "Rice") };
+    server.version += 1;
+    FileSystem.getInfoAsync.mockImplementation(async (uri) =>
+      uri.startsWith(dir)
+        ? { exists: true, isDirectory: false, modificationTime: (Date.now() - 3 * 86400000) / 1000 }
+        : { exists: false }
+    );
+    await wait(31000);
+    expect(app.inventory.items.map((item) => item.name)).toEqual(["Milk"]);
+    await quit();
+
+    FileSystem.readDirectoryAsync.mockResolvedValue(["milk.jpg", "rice.jpg"]);
+    FileSystem.deleteAsync.mockClear();
+    await launch();
+    await wait(0);
+    expect(FileSystem.deleteAsync.mock.calls.map(([uri]) => uri)).toEqual([`${dir}rice.jpg`]);
+  });
+});
+
 describe("the person's own categories", () => {
   const baby = { label: "Baby", room: "household" };
   const pets = { label: "Pets", room: "household" };
@@ -332,6 +413,69 @@ describe("the Edit form", () => {
     await wait(16000);
     expect(app.inventory.items[0]).toMatchObject({ note: "top shelf", expiryDate, expiryWanted: true });
     expect(server.doc.items[0]).toMatchObject({ note: "top shelf", expiryDate, expiryWanted: true });
+  });
+});
+
+describe("the Edit form of an item a sync took away", () => {
+  it("says so on Save instead of closing as if it had saved", async () => {
+    await launch();
+    await add("Bread");
+    await add("Milk");
+    await wait(16000);
+    const navigation = {
+      goBack: jest.fn(),
+      navigate: jest.fn(),
+      popToTop: jest.fn(),
+      dispatch: jest.fn(),
+      addListener: jest.fn(() => () => {}),
+    };
+    const itemId = app.inventory.items.find((item) => item.name === "Milk").id;
+    await act(async () => {
+      showScreen(<EditItemScreen navigation={navigation} route={{ params: { itemId } }} />);
+    });
+    // The laptop deletes Milk, and that comes down while the form is open.
+    server.doc = { ...server.doc, items: server.doc.items.filter((item) => item.id !== itemId) };
+    server.version += 1;
+    await wait(31000);
+    expect(app.inventory.items.map((item) => item.name)).toEqual(["Bread"]);
+
+    const note = renderer.root.findByProps({ accessibilityLabel: "Note" });
+    await act(async () => note.props.onChangeText("top shelf"));
+    const [save] = renderer.root.findAll(
+      (node) => node.props.label === "Save" && typeof node.props.onPress === "function"
+    );
+    await act(async () => {
+      await save.props.onPress();
+    });
+    expect(Alert.alert).toHaveBeenCalledWith("Item not found");
+    expect(navigation.goBack).not.toHaveBeenCalled();
+  });
+});
+
+describe("disconnecting", () => {
+  it("forgets the server's state, even with a sync still on its way", async () => {
+    await launch();
+    await add("Milk");
+    await wait(16000);
+    // Bread goes up over a slow connection, and Disconnect is tapped meanwhile.
+    server.delay = 5000;
+    await add("Bread");
+    const asked = server.fetch.mock.calls.length;
+    await wait(15500);
+    expect(server.fetch.mock.calls.length).toBe(asked + 1);
+    await act(async () => {
+      app.sync.disconnect();
+    });
+    expect(app.sync.status.state).toBe("off");
+    await wait(20000);
+    expect(server.doc.items.map((item) => item.name).sort()).toEqual(["Bread", "Milk"]);
+    const kept = await AsyncStorage.multiGet(["xrnhome_sync_meta", "xrnhome_sync_base", "xrnhome_sync_sent"]);
+    expect(kept).toEqual([
+      ["xrnhome_sync_meta", null],
+      ["xrnhome_sync_base", null],
+      ["xrnhome_sync_sent", null],
+    ]);
+    expect(app.sync.meta.version).toBeNull();
   });
 });
 

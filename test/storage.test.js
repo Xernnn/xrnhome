@@ -1,6 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-import { clearRecoveredMark, loadItems, saveItems } from "../src/utils/storage";
+import { clearRecoveredMark, loadItems, saveItems, setAsideItems } from "../src/utils/storage";
 
 jest.mock("@react-native-async-storage/async-storage", () =>
   require("@react-native-async-storage/async-storage/jest/async-storage-mock")
@@ -67,6 +67,16 @@ describe("reading the saved items", () => {
       throw new Error("disk trouble");
     });
     expect((await loadItems()).status).toBe("unreadable");
+  });
+
+  it("keeps an older set-aside copy when another one is set aside", async () => {
+    await AsyncStorage.setItem("xrnhome_items_damaged", "[{older");
+    await AsyncStorage.setItem(KEY, '[{"id":"1"}]');
+    expect(await setAsideItems()).toBe(true);
+    const keys = await AsyncStorage.getAllKeys();
+    const values = Object.fromEntries(await AsyncStorage.multiGet(keys));
+    expect(values["xrnhome_items_damaged"]).toBe("[{older");
+    expect(Object.values(values).filter((v) => v === '[{"id":"1"}]')).toHaveLength(2);
   });
 
   it("reports a failed save", async () => {

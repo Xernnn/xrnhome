@@ -104,7 +104,6 @@ export default function ItemDetailScreen({ navigation, route }) {
         <EmptyState
           icon="alert-circle-outline"
           title="Item not found"
-          subtitle="This item may have been deleted."
         />
       </SafeAreaView>
     );
@@ -203,9 +202,7 @@ export default function ItemDetailScreen({ navigation, route }) {
               size={20}
               color={colors.textSecondary}
             />
-            <Text style={styles.dateMissingText}>
-              This stock has no expiry date yet
-            </Text>
+            <Text style={styles.dateMissingText}>No expiry date</Text>
             <TagButton label="Set date" onPress={setExpiry} />
           </View>
         ) : null}
@@ -272,7 +269,6 @@ export default function ItemDetailScreen({ navigation, route }) {
             icon={onList ? "cart" : "cart-plus"}
             iconColor={onList ? colors.accent : undefined}
             title={onList ? "On your shopping list" : "Add to the shopping list"}
-            subtitle={onList ? "Tap to take it off for now" : "Just this once"}
             chevron={false}
             onPress={handleList}
           />
@@ -282,7 +278,7 @@ export default function ItemDetailScreen({ navigation, route }) {
             subtitle={
               item.recurring
                 ? `Goes on the list ${describeRestockRule(getRestockRule(item))}`
-                : "Off. When it runs out it waits under Ran out."
+                : "Off"
             }
             value={!!item.recurring}
             onValueChange={toggleRecurring}
@@ -297,7 +293,7 @@ export default function ItemDetailScreen({ navigation, route }) {
 
         <SectionLabel>History</SectionLabel>
         {recentHistory.length === 0 ? (
-          <Text style={styles.emptyHistory}>No history yet.</Text>
+          <Text style={styles.emptyHistory}>No history</Text>
         ) : (
           <GroupCard>
             {recentHistory.map((entry, index) => (

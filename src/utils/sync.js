@@ -193,8 +193,9 @@ async function uploadPhotos(server, items) {
     } catch (error) {
       throw new ServerError(0, failureText(0));
     }
-    // A photo the server won't take (too big, say) stays off it; the items still go.
-    if (up.status === 400 || up.status === 413) {
+    // A photo the server won't take (too big, or no room left for this user's
+    // photos) stays off it; the items still go.
+    if (up.status === 400 || up.status === 413 || up.status === 507) {
       console.warn(`The home server didn't take photo ${name} (${up.status}).`);
       continue;
     }

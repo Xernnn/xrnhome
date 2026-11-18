@@ -135,18 +135,24 @@ node scripts/release.mjs
 ```
 
 This builds the release APK on your computer and uploads it to the server over
-ssh, with an `app.json` that names it. It bumps `android.versionCode` in
-`app.json` first if the server already has that build. The app checks every
+ssh, with an `app.json` that names it. It only runs on `master` with everything
+committed (`--force` overrides that). It bumps `android.versionCode` in
+`app.json` first if the server already has that build, so bump it in a commit
+beforehand. The app checks every
 few hours, or right away from Settings → Check for updates. It downloads the
-APK and opens Android's installer. The script reads
+APK, checks its SHA-256 against the one in `app.json`, and opens Android's
+installer. The script reads
 `~/.config/xrnhome/release.json`:
 
 ```json
-{ "server": "https://<your-host>/xrnhome", "ssh": ["<ssh-host>"] }
+{ "server": "https://<your-host>/xrnhome", "ssh": ["<ssh-host>"], "signer": "<SHA-256>" }
 ```
 
 The local build needs the Android SDK, NDK 27.1 and JDK 17. Android only
-installs an update signed with the same key as the app already on the phone.
+installs an update signed with the same key as the app already on the phone, so
+`signer` is that key's certificate SHA-256 (`apksigner verify --print-certs`),
+and an APK signed with any other key, or whose signer can't be read, isn't
+published.
 
 ## Your home server
 
@@ -182,7 +188,8 @@ everything from both, restore the server's copy, or replace it with its own. A
 device that has lost its items, or had to recover a damaged list, asks before
 sending anything, and so does one whose merge would remove most of its items. Every
 write also keeps the copy it replaced: the last 20 in `history/`, and the first one
-of each day for 60 days in `daily/`.
+of each day for 60 days in `daily/`. Each user's photos stop at 5,000 files and
+1 GB; a photo past that isn't taken, and its item syncs without it.
 
 ```bash
 python3 -m unittest server/test_xrnhome_sync.py    # needs bcrypt
@@ -279,7 +286,7 @@ assets/                 app icon, splash image and the Geist Mono font
 public/fonts/           Geist, the laptop version's text font
 server/                 the home server and its tests
 scripts/release.mjs     builds the APK or the laptop version and publishes it to
-                        the home server
+                        the home server; release-guard.js holds its checks
 ```
 
 ## Built with

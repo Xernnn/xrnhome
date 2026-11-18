@@ -38,11 +38,13 @@ class SyncServerTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         users = os.path.join(self.tmp.name, "users")
         with open(users, "w") as f:
-            f.write("sonn:" + bcrypt.hashpw(RIGHT.encode(), bcrypt.gensalt(4)).decode() + "\n")
+            f.write("alex:" + bcrypt.hashpw(RIGHT.encode(), bcrypt.gensalt(4)).decode() + "\n")
         self.data = os.path.join(self.tmp.name, "data")
         srv.args = type("Args", (), {"data": self.data, "users": users})()
         srv.FAIL_DELAY_S = 0
         srv.failures.clear()
+        srv.checking.clear()
+        srv.auth_cache.clear()
         srv.pruned.clear()
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), srv.Handler)
         self.httpd.daemon_threads = True
@@ -58,7 +60,7 @@ class SyncServerTest(unittest.TestCase):
         data = body if raw else (json.dumps(body).encode() if body is not None else None)
         req = urllib.request.Request(self.base + path, method=method, data=data)
         if password is not None:
-            req.add_header("Authorization", "Basic " + base64.b64encode(f"sonn:{password}".encode()).decode())
+            req.add_header("Authorization", "Basic " + base64.b64encode(f"alex:{password}".encode()).decode())
         for k, v in (headers or {}).items():
             req.add_header(k, v)
         try:
@@ -195,6 +197,25 @@ class SyncServerTest(unittest.TestCase):
         self.assertEqual((200, jpeg, "image/jpeg"), (status, body, headers["Content-Type"]))
         self.assertEqual(404, self.call("GET", "/photos/nope.jpg")[0])
 
+    def test_one_users_photos_stop_at_their_cap(self):
+        # Every photo up to 15 MB, as many as were sent, kept at least 60 days: a client (or a
+        # stolen login) could fill the disk every other service on the phone shares.
+        count, size = srv.MAX_PHOTOS, srv.MAX_PHOTOS_BYTES
+        srv.MAX_PHOTOS, srv.MAX_PHOTOS_BYTES = 3, 250
+        try:
+            put = lambda name, n: self.call("PUT", f"/photos/{name}", b"x" * n, raw=True)[0]
+            self.assertEqual([201, 201], [put("a.jpg", 100), put("b.jpg", 100)])
+            self.assertEqual(507, put("c.jpg", 100))  # 300 bytes
+            self.assertEqual(201, put("b.jpg", 150))  # in b's place: 250
+            self.assertEqual(507, put("c.jpg", 1))
+            self.assertEqual(201, put("a.jpg", 50))  # in a's place: 200
+            self.assertEqual(201, put("c.jpg", 50))  # 250
+            srv.MAX_PHOTOS_BYTES = 10000
+            self.assertEqual(507, put("d.jpg", 1))  # a fourth photo
+            self.assertEqual(["a.jpg", "b.jpg", "c.jpg"], json.loads(self.call("GET", "/photos")[1]))
+        finally:
+            srv.MAX_PHOTOS, srv.MAX_PHOTOS_BYTES = count, size
+
     def test_photo_names_stay_in_their_folder(self):
         for name in ("..%2Fusers", ".hidden.jpg", "a/b.jpg", "a..b.jpg"):
             self.assertIn(self.call("PUT", f"/photos/{name}", b"x", raw=True)[0], (400, 404), name)
@@ -263,29 +284,60 @@ class SyncServerTest(unittest.TestCase):
             with unittest.mock.patch.object(bcrypt, "checkpw", wraps=bcrypt.checkpw) as checkpw:
                 self.assertIsNone(srv.check_login(header))
             return checkpw.call_count
-        self.assertEqual(1, checks("sonn:nope"))
+        self.assertEqual(1, checks("alex:nope"))
         self.assertEqual(1, checks("nobody:nope"))  # none: the answer came sooner, and said so
         self.assertIsNone(srv.check_login("Basic " + base64.b64encode(b"nobody:secret").decode()))
+
+    def timed(self, addr, password):
+        start = time.monotonic()
+        status = self.call("GET", "/state", password=password, headers={"X-Forwarded-For": addr})[0]
+        return status, time.monotonic() - start
 
     def test_a_request_with_no_password_isnt_held(self):
         # The hold after a wrong password slows a guesser down. One that sent no password, as the
         # browser's first try at the laptop version does, guessed nothing and was held all the same.
-        def timed(addr, password):
-            start = time.monotonic()
-            status = self.call("GET", "/state", password=password, headers={"X-Forwarded-For": addr})[0]
-            return status, time.monotonic() - start
-        srv.failures["203.0.113.61"] = {str(i): time.monotonic() for i in range(srv.FAIL_LIMIT)}  # locked out
         srv.FAIL_DELAY_S = 0.5
         try:
-            for addr, status in (("203.0.113.60", 401), ("203.0.113.61", 429)):
-                got, took = timed(addr, None)
-                self.assertEqual(status, got)
-                self.assertLess(took, 0.4, addr)
-                got, took = timed(addr, "nope")
-                self.assertEqual(status, got)
-                self.assertGreaterEqual(took, 0.5, addr)
+            got, took = self.timed("203.0.113.60", None)
+            self.assertEqual(401, got)
+            self.assertLess(took, 0.4)
+            got, took = self.timed("203.0.113.60", "nope")
+            self.assertEqual(401, got)
+            self.assertGreaterEqual(took, 0.5)
         finally:
             srv.FAIL_DELAY_S = 0
+
+    def test_a_locked_out_address_is_answered_at_once(self):
+        # Its login isn't checked, so holding the 429 slowed no guess down: it only parked a
+        # thread for every request a flood sent.
+        srv.failures["203.0.113.61"] = {str(i): (time.monotonic(), "alex") for i in range(srv.FAIL_LIMIT)}
+        srv.FAIL_DELAY_S = 0.5
+        try:
+            for password in (None, "nope", RIGHT):
+                got, took = self.timed("203.0.113.61", password)
+                self.assertEqual(429, got)
+                self.assertLess(took, 0.4, password)
+        finally:
+            srv.FAIL_DELAY_S = 0
+
+    def test_only_a_few_wrong_logins_are_held_at_once(self):
+        # Each held answer is a thread on the old phone. Many connections sending bad passwords
+        # each held one for the whole delay.
+        srv.FAIL_DELAY_S = 0.5
+        held, srv.held = srv.held, threading.BoundedSemaphore(2)
+        took = []
+        try:
+            burst = [threading.Thread(target=lambda n=n: took.append(self.timed(f"203.0.113.{100 + n}", "nope")[1]))
+                     for n in range(6)]
+            for t in burst:
+                t.start()
+            for t in burst:
+                t.join()
+        finally:
+            srv.held = held
+            srv.FAIL_DELAY_S = 0
+        self.assertEqual(6, len(took))
+        self.assertEqual(2, len([t for t in took if t >= 0.5]))
 
     def test_wrong_passwords_lock_the_address_out(self):
         srv.FAIL_LIMIT = 3
@@ -333,6 +385,68 @@ class SyncServerTest(unittest.TestCase):
         finally:
             srv.FAIL_LIMIT = 10
 
+    def add_user(self, name, password):
+        import bcrypt
+
+        with open(srv.args.users, "a") as f:
+            f.write(f"{name}:" + bcrypt.hashpw(password.encode(), bcrypt.gensalt(4)).decode() + "\n")
+
+    def as_user(self, name, password, addr="203.0.113.80"):
+        header = "Basic " + base64.b64encode(f"{name}:{password}".encode()).decode()
+        return self.call("GET", "/state", password=None,
+                         headers={"Authorization": header, "X-Forwarded-For": addr})[0]
+
+    def test_a_right_login_clears_only_its_own_names_mistakes(self):
+        # Any right login cleared its whole address's count: a second account (or a device
+        # signing in) behind the same address gave a guesser all its guesses back.
+        self.add_user("guest", "guestpass")
+        for n in range(srv.FAIL_LIMIT - 1):
+            self.assertEqual(401, self.as_user("alex", f"guess{n}"))
+        self.assertEqual(200, self.as_user("guest", "guestpass"))
+        self.assertEqual(401, self.as_user("alex", "guess-last"))
+        self.assertEqual(429, self.as_user("alex", "one-more"))
+
+    def test_a_right_password_clears_that_names_own_mistakes(self):
+        for n in range(srv.FAIL_LIMIT - 1):
+            self.assertEqual(401, self.as_user("alex", f"typo{n}"))
+        self.assertEqual(200, self.as_user("alex", RIGHT))
+        for n in range(srv.FAIL_LIMIT - 1):
+            self.assertEqual(401, self.as_user("alex", f"again{n}"))
+
+    def test_a_device_syncing_with_a_known_password_clears_nothing(self):
+        # A device sends its password with every request. Once it's known right that's a session,
+        # not a sign-in, and it cleared the count for its whole address every 30 seconds.
+        self.assertEqual(200, self.as_user("alex", RIGHT))
+        for n in range(srv.FAIL_LIMIT - 1):
+            self.assertEqual(401, self.as_user("alex", f"guess{n}"))
+        self.assertEqual(200, self.as_user("alex", RIGHT))
+        self.assertEqual(401, self.as_user("alex", "guess-last"))
+        self.assertEqual(429, self.as_user("alex", "one-more"))
+
+    def test_a_login_being_checked_is_no_wrong_one(self):
+        # Every login took a place in the count before it was checked: two devices signing in at
+        # once at an address with a few mistakes behind it got 429 with the right password.
+        self.add_user("guest", "guestpass")
+        for n in range(srv.FAIL_LIMIT - 1):
+            self.assertEqual(401, self.as_user("nobody", f"guess{n}"))
+        real, answers = srv.check_login, []
+
+        def slow(header):
+            time.sleep(0.3)
+            return real(header)
+
+        srv.check_login = slow
+        try:
+            both = [threading.Thread(target=lambda u=u, p=p: answers.append(self.as_user(u, p)))
+                    for u, p in (("alex", RIGHT), ("guest", "guestpass"))]
+            for t in both:
+                t.start()
+            for t in both:
+                t.join()
+        finally:
+            srv.check_login = real
+        self.assertEqual([200, 200], answers)
+
     def test_releases_come_from_the_update_folder(self):
         os.makedirs(os.path.join(self.data, "update"))
         with open(os.path.join(self.data, "update", "app.json"), "w") as f:
@@ -352,34 +466,101 @@ class SyncServerTest(unittest.TestCase):
         for n in range(srv.KEEP_VERSIONS + 5):
             _, _, headers = self.call("PUT", "/state", snapshot(f"item {n}"), {"If-Match": v})
             v = headers["ETag"]
-        history = sorted(int(n[:-5]) for n in os.listdir(os.path.join(self.data, "users", "sonn", "history")))
+        history = sorted(int(n[:-5]) for n in os.listdir(os.path.join(self.data, "users", "alex", "history")))
         self.assertEqual(srv.KEEP_VERSIONS, len(history))
         self.assertEqual(srv.KEEP_VERSIONS + 4, history[-1])
-        daily = os.listdir(os.path.join(self.data, "users", "sonn", "daily"))
+        daily = os.listdir(os.path.join(self.data, "users", "alex", "daily"))
         self.assertEqual(1, len(daily))
-        with open(os.path.join(self.data, "users", "sonn", "daily", daily[0])) as f:
+        with open(os.path.join(self.data, "users", "alex", "daily", daily[0])) as f:
             self.assertEqual("item 0", json.load(f)["data"]["items"][0]["name"])
 
     def test_photos_nothing_names_any_more_are_swept(self):
-        folder = os.path.join(self.data, "users", "sonn", "photos")
+        folder = os.path.join(self.data, "users", "alex", "photos")
         for name in ("kept.jpg", "old.jpg", "new.jpg"):
             self.call("PUT", f"/photos/{name}", b"x", raw=True)
         old = time.time() - srv.PHOTO_GRACE_S - 60
         for name in ("kept.jpg", "old.jpg"):
             os.utime(os.path.join(folder, name), (old, old))
         self.call("PUT", "/state", snapshot("Milk", photo="kept.jpg"), {"If-Match": '"0"'})
-        srv.prune_photos("sonn", force=True)
+        srv.prune_photos("alex", force=True)
         self.assertEqual(["kept.jpg", "new.jpg"], sorted(os.listdir(folder)))
+
+    def old_photos(self, *names):
+        folder = os.path.join(self.data, "users", "alex", "photos")
+        old = time.time() - srv.PHOTO_GRACE_S - 60
+        for name in names:
+            self.call("PUT", f"/photos/{name}", b"x", raw=True)
+            os.utime(os.path.join(folder, name), (old, old))
+        return folder
+
+    def test_the_sweep_reads_the_kept_copies_without_holding_up_the_others(self):
+        # It parsed state.json and up to 80 kept copies under the lock every read and write waits
+        # for, so on the phone a sweep held up every other request meanwhile.
+        v = '"0"'
+        for n in range(5):
+            v = self.call("PUT", "/state", snapshot(f"item {n}"), {"If-Match": v})[2]["ETag"]
+        folder = self.old_photos("gone.jpg")
+        real, under_lock = srv.read_doc, []
+
+        def watched(path):
+            under_lock.append(srv.lock.locked())
+            return real(path)
+
+        with unittest.mock.patch.object(srv, "read_doc", watched):
+            srv.prune_photos("alex", force=True)
+        self.assertGreater(len(under_lock), 5)
+        self.assertNotIn(True, under_lock)
+        self.assertEqual([], os.listdir(folder))
+
+    def test_a_write_during_the_sweep_keeps_the_photo_it_names(self):
+        self.call("PUT", "/state", snapshot("Milk"), {"If-Match": '"0"'})
+        self.call("PUT", "/state", snapshot("Milk", "Eggs"), {"If-Match": '"1"'})
+        folder = self.old_photos("back.jpg")
+        real, wrote = srv.read_doc, []
+
+        def write_meanwhile(path):
+            # An item with that old photo comes back (an undone delete on the laptop, say) while
+            # the sweep is reading the copies that don't name it.
+            if not wrote and "history" in path:
+                wrote.append(self.call("PUT", "/state", snapshot("Milk", photo="back.jpg"), {"If-Match": '"2"'})[0])
+            return real(path)
+
+        with unittest.mock.patch.object(srv, "read_doc", write_meanwhile):
+            srv.prune_photos("alex", force=True)
+        self.assertEqual([200], wrote)
+        self.assertEqual(["back.jpg"], os.listdir(folder))
+
+    def test_a_copy_that_cant_be_read_is_kept_and_the_newest_kept_copy_stands_in(self):
+        # It read as "version 0, empty": the count started again, and the next writes took the
+        # numbers of the copies kept in history/.
+        v = '"0"'
+        for n in range(4):
+            v = self.call("PUT", "/state", snapshot(f"item {n}"), {"If-Match": v})[2]["ETag"]
+        folder = os.path.join(self.data, "users", "alex")
+        with open(os.path.join(folder, "state.json"), "w") as f:
+            f.write('{"version": 4, "data": {"items": [{"na')
+        with unittest.mock.patch("sys.stderr", new_callable=io.StringIO) as log:
+            status, body, headers = self.call("GET", "/state")
+        self.assertEqual((200, '"3"', ["item 2"]),
+                         (status, headers["ETag"], [i["name"] for i in json.loads(body)["items"]]))
+        aside = [n for n in os.listdir(folder) if n.startswith("state.json.damaged-")]
+        self.assertEqual(1, len(aside))
+        with open(os.path.join(folder, aside[0])) as f:
+            self.assertIn('"version": 4', f.read())
+        self.assertIn("can't be read", log.getvalue())
+        status, _, headers = self.call("PUT", "/state", snapshot("again"), {"If-Match": '"3"'})
+        self.assertEqual((200, '"4"'), (status, headers["ETag"]))
+        self.assertTrue(os.path.exists(os.path.join(folder, "history", "1.json")))
 
     def test_a_photo_waits_for_the_item_that_names_it(self):
         # The laptop sends a photo as it's picked, and the item a little later. Shut
         # in between, it can be away for days before the item follows.
-        folder = os.path.join(self.data, "users", "sonn", "photos")
+        folder = os.path.join(self.data, "users", "alex", "photos")
         self.call("PUT", "/photos/waiting.jpg", b"x", raw=True)
         days_ago = time.time() - 3 * 86400
         os.utime(os.path.join(folder, "waiting.jpg"), (days_ago, days_ago))
         self.call("PUT", "/state", snapshot("Milk"), {"If-Match": '"0"'})
-        srv.prune_photos("sonn", force=True)
+        srv.prune_photos("alex", force=True)
         self.assertEqual(["waiting.jpg"], os.listdir(folder))
         self.call("PUT", "/state", snapshot("Milk", photo="waiting.jpg"), {"If-Match": '"1"'})
         self.assertEqual(200, self.call("GET", "/photos/waiting.jpg")[0])
