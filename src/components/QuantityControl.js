@@ -74,7 +74,8 @@ function StepButton({
 // sits between the buttons is the caller's. Each button takes touches over at
 // least MIN_TARGET each way. `slop` ({ top, bottom, outer, inner }, in dp past the
 // button) is for a caller that clips touches near its edge: what it can't reach
-// outwards it then gives inwards, towards the value.
+// outwards it then gives inwards, towards the value. `valueWidth` fixes the room
+// between the buttons, so steppers in a column line up whatever they show.
 export function Stepper({
   children,
   onMinus,
@@ -87,6 +88,7 @@ export function Stepper({
   repeat = false,
   size = 38,
   slop,
+  valueWidth,
   style,
 }) {
   const { colors } = useTheme();
@@ -112,7 +114,14 @@ export function Stepper({
         hitSlop={{ top, bottom, left: outer, right: inner }}
       />
       {children != null ? (
-        <View style={styles.valueWrap}>{children}</View>
+        <View
+          style={[
+            styles.valueWrap,
+            valueWidth ? { width: valueWidth, flexGrow: 0, flexShrink: 0 } : null,
+          ]}
+        >
+          {children}
+        </View>
       ) : (
         <View style={styles.gap} />
       )}
@@ -142,6 +151,7 @@ export default function QuantityControl({
   step = 1,
   unitLabel = "",
   size = 38,
+  valueWidth,
   label = "Amount",
 }) {
   const { colors } = useTheme();
@@ -169,6 +179,7 @@ export default function QuantityControl({
   return (
     <Stepper
       size={size}
+      valueWidth={valueWidth}
       repeat
       onMinus={() => change(-1)}
       onPlus={() => change(1)}
@@ -178,7 +189,10 @@ export default function QuantityControl({
       <View style={styles.valueRow}>
         {editable ? (
           <TextInput
-            style={styles.input}
+            style={[
+              styles.input,
+              Platform.OS === "web" && valueWidth ? { width: valueWidth - 12 } : null,
+            ]}
             value={typing ?? String(value)}
             onChangeText={onType}
             onBlur={() => setTyping(null)}

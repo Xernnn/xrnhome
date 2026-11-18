@@ -318,23 +318,18 @@ export const isAlmostOut = (item) => {
   return low && openLow;
 };
 
-const leftText = (n) =>
-  n <= 0 ? "it runs out" : n === 1 ? "there's 1 left" : `there are ${n} left`;
-
-// "when there are 2 left and the open one is at 20% or less": the rule as the
-// item's screens say it.
-export const describeRestockRule = (rule) => {
-  const units = leftText(rule.units);
+// The rule in figures, as the item's page shows it under its switch: "2 left",
+// "2 left + 20%" (both have to be true), "2 left or 20%" (either), and "0 left"
+// for when it runs out. The open one at 0 left is gone too, so "both" is "0 left".
+export const restockFigures = (rule) => {
+  const units = `${Math.max(0, rule.units)} left`;
   if (rule.percent === null) {
-    return `when ${units}`;
+    return units;
   }
-  const open = `the open one is at ${rule.percent}% or less`;
   if (rule.match === "any") {
-    return rule.units <= 0
-      ? `when ${open}, or when it runs out`
-      : `when ${units}, or when ${open}`;
+    return `${units} or ${rule.percent}%`;
   }
-  return rule.units <= 0 ? "when it runs out" : `when ${units} and ${open}`;
+  return rule.units <= 0 ? units : `${units} + ${rule.percent}%`;
 };
 
 // Items with stock show on their room's tab.

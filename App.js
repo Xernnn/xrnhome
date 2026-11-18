@@ -34,10 +34,10 @@ import ErrorBoundary from "./src/components/ErrorBoundary";
 import UndoToast from "./src/components/UndoToast";
 import WebDialogs, { installWebDialogs } from "./src/components/WebDialogs";
 import DesktopApp from "./src/desktop/DesktopApp";
+import { formPage } from "./src/utils/webPages";
 import {
   DESKTOP_WIDTH,
   FONT_FAMILY,
-  FORM_WIDTH,
   PAGE_WIDTH,
   ROOMS,
   TYPE,
@@ -52,11 +52,7 @@ SplashScreen.preventAutoHideAsync().catch(() => {});
 const Stack = createStackNavigator();
 const Tab = createBottomTabNavigator();
 
-// Pages of things to read or fill in stay a readable width in a browser window.
-const FORM_PAGE =
-  Platform.OS === "web"
-    ? { cardStyle: { width: "100%", maxWidth: FORM_WIDTH, alignSelf: "center" } }
-    : {};
+const FORM_PAGE = formPage();
 
 // Every tab is its own stack with the same pushed screens on top of its main one.
 function TabStack({ mainName, mainComponent, mainParams }) {

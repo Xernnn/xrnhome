@@ -1,7 +1,7 @@
 // The building blocks of every screen, after xrnrule's Components.kt: rounded
-// cards with a hairline border, grouped rows like a settings list, small-caps
-// section labels, round header buttons, full-width pills and an on/off switch
-// in the app's green.
+// cards with a hairline border, grouped rows like a settings list (and a form's
+// rows: label left, control right), small-caps section labels, round header
+// buttons, full-width pills, an on/off switch in the app's green, and the tile.
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Animated,
@@ -37,17 +37,6 @@ const useStyles = () => {
 export function Card({ children, style, padding = SPACING.card }) {
   const { styles } = useStyles();
   return <View style={[styles.card, { padding }, style]}>{children}</View>;
-}
-
-// One of a form's cards: a question over its content.
-export function FormSection({ title, children, style }) {
-  const { styles } = useStyles();
-  return (
-    <Card style={[styles.formSection, style]}>
-      <Text style={styles.question}>{title}</Text>
-      <View style={styles.formSectionBody}>{children}</View>
-    </Card>
-  );
 }
 
 // A card of rows separated by inset hairlines.
@@ -331,28 +320,122 @@ export function PillButton({
   );
 }
 
-// A quieter full-width pill, outlined.
-export function OutlinePill({ label, onPress, icon, disabled = false, style }) {
+// A quieter full-width pill, outlined; red for one that deletes.
+export function OutlinePill({
+  label,
+  onPress,
+  icon,
+  disabled = false,
+  danger = false,
+  style,
+}) {
   const { colors, styles } = useStyles();
+  const color = danger ? colors.danger : colors.textPrimary;
   return (
     <TouchableOpacity
       activeOpacity={0.7}
       onPress={onPress}
       disabled={disabled}
       accessibilityRole="button"
-      style={[styles.outlinePill, disabled && styles.disabled, style]}
+      style={[
+        styles.outlinePill,
+        danger && { borderColor: mixHex(colors.danger, colors.background, 0.45) },
+        disabled && styles.disabled,
+        style,
+      ]}
+    >
+      {icon ? (
+        <MaterialCommunityIcons name={icon} size={18} color={color} style={styles.pillIcon} />
+      ) : null}
+      <Text style={[styles.outlinePillText, { color }]} numberOfLines={1}>
+        {label}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
+// A page's one main action where it sits in the top bar: Save.
+export function BarButton({ label, onPress, disabled = false }) {
+  const { colors, styles } = useStyles();
+  return (
+    <TouchableOpacity
+      activeOpacity={0.8}
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityRole="button"
+      accessibilityState={{ disabled }}
+      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+      style={[styles.barButton, disabled && { backgroundColor: colors.surfaceAlt }]}
+    >
+      <Text
+        style={[styles.barButtonText, disabled && { color: colors.textSecondary }]}
+        numberOfLines={1}
+      >
+        {label}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
+// One line of a form's card: its label on the left and what sets it on the
+// right, at one height, with the hairline above unless `first`.
+export function FieldRow({ label, first = false, onPress, children, accessibilityLabel }) {
+  const { styles } = useStyles();
+  const Wrapper = onPress ? TouchableOpacity : View;
+  return (
+    <>
+      {first ? null : <Hairline />}
+      <Wrapper
+        activeOpacity={0.6}
+        onPress={onPress}
+        style={styles.fieldRow}
+        accessibilityRole={onPress ? "button" : undefined}
+        accessibilityLabel={accessibilityLabel}
+      >
+        <Text style={styles.fieldLabel}>{label}</Text>
+        <View style={styles.fieldControl}>{children}</View>
+      </Wrapper>
+    </>
+  );
+}
+
+// A FieldRow that is a switch; the whole row toggles it.
+export function SwitchField({ label, value, onValueChange, first = false }) {
+  return (
+    <FieldRow label={label} first={first} onPress={() => onValueChange(!value)}>
+      <XSwitch value={value} onValueChange={onValueChange} />
+    </FieldRow>
+  );
+}
+
+// A value on the grey that opens its choices: a unit, a date.
+export function ValuePill({ label, icon, open = false, onPress, accessibilityLabel }) {
+  const { colors, styles } = useStyles();
+  return (
+    <TouchableOpacity
+      activeOpacity={0.7}
+      onPress={onPress}
+      style={styles.valuePill}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      accessibilityState={{ expanded: open }}
     >
       {icon ? (
         <MaterialCommunityIcons
           name={icon}
-          size={18}
-          color={colors.textPrimary}
-          style={styles.pillIcon}
+          size={17}
+          color={colors.textSecondary}
+          style={styles.valuePillIcon}
         />
       ) : null}
-      <Text style={styles.outlinePillText} numberOfLines={1}>
+      <Text style={styles.valuePillText} numberOfLines={1}>
         {label}
       </Text>
+      <MaterialCommunityIcons
+        name={open ? "chevron-up" : "chevron-down"}
+        size={18}
+        color={colors.textSecondary}
+      />
     </TouchableOpacity>
   );
 }
@@ -644,16 +727,6 @@ const createStyles = (colors) =>
     groupCard: {
       overflow: "hidden",
     },
-    formSection: {
-      marginTop: 14,
-    },
-    question: {
-      ...TYPE.question,
-      color: colors.textSecondary,
-    },
-    formSectionBody: {
-      marginTop: 14,
-    },
     hairline: {
       height: StyleSheet.hairlineWidth,
       backgroundColor: colors.border,
@@ -763,6 +836,53 @@ const createStyles = (colors) =>
     outlinePillText: {
       ...TYPE.button,
       color: colors.textPrimary,
+    },
+    barButton: {
+      height: 36,
+      minWidth: 64,
+      paddingHorizontal: 16,
+      borderRadius: 18,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: colors.accent,
+    },
+    barButtonText: {
+      ...TYPE.button,
+      color: colors.onAccent,
+    },
+    fieldRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      minHeight: 58,
+      paddingHorizontal: 16,
+      paddingVertical: 8,
+    },
+    fieldLabel: {
+      ...TYPE.body,
+      flex: 1,
+      marginRight: 12,
+      color: colors.textPrimary,
+    },
+    fieldControl: {
+      flexDirection: "row",
+      alignItems: "center",
+    },
+    valuePill: {
+      flexDirection: "row",
+      alignItems: "center",
+      height: 38,
+      paddingLeft: 14,
+      paddingRight: 10,
+      borderRadius: RADIUS.pill,
+      backgroundColor: colors.surfaceAlt,
+    },
+    valuePillIcon: {
+      marginRight: 6,
+    },
+    valuePillText: {
+      ...TYPE.button,
+      color: colors.textPrimary,
+      marginRight: 2,
     },
     segmented: {
       flexDirection: "row",
