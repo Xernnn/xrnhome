@@ -13,12 +13,13 @@ import { findDuplicate, formChanges } from "../utils/inventoryLogic";
 import { countText } from "../utils/constants";
 
 // Two records of one item can't stay apart: they'd be merged on the next launch
-// with no word about it. So the question gets asked now.
+// with no word about it. So the question gets asked now. Merging adds the counts
+// and keeps both notes.
 const askToMerge = (edited, other) =>
   new Promise((resolve) => {
     Alert.alert(
-      `You already have ${other.name}`,
-      `${other.name} in ${other.category} has ${countText(other.quantity, other.unit)}. Merge them? The counts are added and both notes are kept.`,
+      `Merge with the ${other.name} you have?`,
+      `${other.category} · ${countText(other.quantity, other.unit)}`,
       [
         { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
         { text: "Merge", onPress: () => resolve(true) },

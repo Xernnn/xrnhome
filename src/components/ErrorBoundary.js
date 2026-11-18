@@ -6,7 +6,7 @@ import { DARK_COLORS, LIGHT_COLORS, TYPE } from "../utils/constants";
 
 // The last resort when a screen throws. It sits outside every provider, so it
 // reads the theme itself. Items are saved as they change, so nothing is lost by
-// getting here, and that's worth saying.
+// getting here.
 export default class ErrorBoundary extends React.Component {
   state = { error: null };
 
@@ -28,9 +28,6 @@ export default class ErrorBoundary extends React.Component {
       <View style={[styles.page, { backgroundColor: colors.background }]}>
         <Text style={[styles.title, { color: colors.textPrimary }]}>
           Something went wrong
-        </Text>
-        <Text style={[styles.body, { color: colors.textSecondary }]}>
-          Your items are safe. They're saved as you change them.
         </Text>
         <TouchableOpacity
           activeOpacity={0.8}
@@ -59,9 +56,6 @@ const styles = StyleSheet.create({
   title: {
     ...TYPE.title,
     marginBottom: 8,
-  },
-  body: {
-    ...TYPE.body,
   },
   button: {
     minHeight: 50,

@@ -105,7 +105,11 @@ export default function DesktopApp() {
     [navigation, show]
   );
   const addWithDetails = useCallback((params) => show(["AddItem", params]), [show]);
-  const roomRoute = useMemo(() => ({ params: { room: room?.key } }), [room?.key]);
+  // The box at the top adds things here, so the room's page needs no + of its own.
+  const roomRoute = useMemo(
+    () => ({ params: { room: room?.key, quickAdd: true } }),
+    [room?.key]
+  );
 
   const panelOpen = !!panel.top;
   useEffect(() => {

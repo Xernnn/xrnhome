@@ -76,6 +76,7 @@ export default function ShoppingScreen({ navigation }) {
 
   const [newName, setNewName] = useState("");
   const [newRoom, setNewRoom] = useState(DEFAULT_ROOM);
+  const [addFocused, setAddFocused] = useState(false);
   // Items ticked off this trip: id -> { count, before }. They stay on screen,
   // ticked, so a wrong tap can be undone and more can be added. Saved, so the
   // trip survives the app being killed halfway round the shop.
@@ -403,17 +404,19 @@ export default function ShoppingScreen({ navigation }) {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.addBar}>
+        <View style={[styles.addBar, addFocused && { borderColor: colors.accent }]}>
           <TextInput
             style={styles.addInput}
             value={newName}
             onChangeText={setNewName}
-            placeholder="Add something to buy"
+            onFocus={() => setAddFocused(true)}
+            onBlur={() => setAddFocused(false)}
+            placeholder="Add to the list"
             placeholderTextColor={colors.textSecondary}
             returnKeyType="done"
             onSubmitEditing={addToList}
             submitBehavior="submit"
-            accessibilityLabel="Add something to buy"
+            accessibilityLabel="Add to the list"
           />
           <TouchableOpacity
             activeOpacity={0.7}
