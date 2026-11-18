@@ -31,6 +31,7 @@ sync password.
                               the laptop version, from `release.mjs --web`, in <data>/web. It
                               needs the login too, so the browser asks once and then sends it
                               with the app's own requests, and nothing has to store a password
+    HEAD                      any GET above, answered without its body
 
 Every write keeps the copy it replaces: the last KEEP_VERSIONS of them in history/, and the
 first of each day in daily/ for KEEP_DAYS. A photo goes once none of those name it any more, and
@@ -541,7 +542,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(size))
             self.end_headers()
-            shutil.copyfileobj(f, self.wfile)
+            if self.command != "HEAD":
+                shutil.copyfileobj(f, self.wfile)
 
     def length(self, limit):
         """The request body's length, or None once an error has been answered."""
@@ -632,6 +634,10 @@ class Handler(BaseHTTPRequestHandler):
         fresh = name.endswith(".html")
         self.send_file(os.path.join(args.data, "web", name), ctype,
                        cache="no-cache" if fresh else FOREVER, csp=WEB_CSP)
+
+    # A GET's answer without its body, as curl -I and monitors ask: http.server answered 501
+    # "Unsupported method", which xrnhub's log page shows as an error.
+    do_HEAD = do_GET
 
     def do_PUT(self):
         path = self.route()

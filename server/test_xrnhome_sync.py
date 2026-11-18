@@ -109,6 +109,27 @@ class SyncServerTest(unittest.TestCase):
                      "/xrnhome/.hidden.js", "/xrnhome/notes.txt", "/xrnhome//etc/passwd.json"):
             self.assertEqual(404, self.call("GET", path)[0], path)
 
+    def head(self, path, login=True):
+        """The whole answer to a HEAD request, read to the end: a body sent anyway shows up in it."""
+        auth = b"Authorization: Basic " + base64.b64encode(f"alex:{RIGHT}".encode()) + b"\r\n" if login else b""
+        with socket.create_connection(("127.0.0.1", self.httpd.server_address[1]), timeout=10) as s:
+            s.sendall(b"HEAD " + path.encode() + b" HTTP/1.1\r\nHost: x\r\nConnection: close\r\n" + auth + b"\r\n")
+            return b"".join(iter(lambda: s.recv(4096), b""))
+
+    def test_head_is_a_get_without_the_body(self):
+        # curl -I on the laptop page got 501 "Unsupported method", which xrnhub's log page shows as
+        # an error. send_file streams the page's files itself, so it has to leave them out too.
+        self.put_web("index.html", "<html>")
+        self.call("PUT", "/state", snapshot("Milk"), {"If-Match": '"0"'})
+        for path, login, status, header in (("/health", False, b"200", b"Content-Length: 2"),
+                                            ("/xrnhome/", True, b"200", b"Content-Length: 6"),
+                                            ("/state", True, b"200", b'ETag: "1"'),
+                                            ("/xrnhome/", False, b"401", b"WWW-Authenticate: Basic")):
+            answer = self.head(path, login)
+            self.assertRegex(answer, rb"^HTTP/1\.[01] " + status + rb" ", path)
+            self.assertIn(header, answer, path)
+            self.assertTrue(answer.endswith(b"\r\n\r\n"), (path, answer[-40:]))
+
     def test_nothing_is_served_before_a_web_build_is_published(self):
         self.assertEqual(404, self.call("GET", "/xrnhome/")[0])
 
