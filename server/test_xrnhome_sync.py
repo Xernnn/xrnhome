@@ -9,6 +9,7 @@ import io
 import json
 import os
 import socket
+import struct
 import tempfile
 import threading
 import time
@@ -129,6 +130,43 @@ class SyncServerTest(unittest.TestCase):
             self.assertRegex(answer, rb"^HTTP/1\.[01] " + status + rb" ", path)
             self.assertIn(header, answer, path)
             self.assertTrue(answer.endswith(b"\r\n\r\n"), (path, answer[-40:]))
+
+    def cut_upload(self, reset):
+        """A PUT /state whose body stops half way, then the connection closes, as a reverse proxy
+        closes it when the device's side drops: with [reset], hard, before any answer can come back."""
+        body = json.dumps(snapshot("a" * 4000)).encode()
+        login = base64.b64encode(f"alex:{RIGHT}".encode())
+        head = (b"PUT /state HTTP/1.1\r\nHost: x\r\nAuthorization: Basic " + login +
+                b'\r\nIf-Match: "0"\r\nContent-Length: ' + str(len(body)).encode() + b"\r\n\r\n")
+        with unittest.mock.patch("sys.stderr", new_callable=io.StringIO) as log:
+            with socket.create_connection(("127.0.0.1", self.httpd.server_address[1]), timeout=10) as s:
+                s.sendall(head + body[:len(body) // 2])
+                if reset:
+                    s.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+                    answer = b""
+                else:
+                    s.shutdown(socket.SHUT_WR)
+                    answer = b"".join(iter(lambda: s.recv(4096), b""))
+            for _ in range(300):  # the handler finishes on its own thread
+                if any(word in log.getvalue() for word in ("dropped", "Traceback", '" 400 ')):
+                    break
+                time.sleep(0.01)
+            time.sleep(0.1)
+        return answer, log.getvalue()
+
+    def test_an_upload_cut_short_is_answered_as_such_and_writes_nothing(self):
+        # The half that came was parsed as a snapshot, and the 400 said the body must be {"items": ...}.
+        answer, log = self.cut_upload(reset=False)
+        self.assertRegex(answer, rb"^HTTP/1\.[01] 400 ")
+        self.assertIn(b"the upload stopped short", answer)
+        self.assertNotIn("Traceback", log)
+        self.assertEqual('"0"', self.call("GET", "/state")[2]["ETag"])
+
+    def test_a_caller_that_hangs_up_is_one_line_in_the_log_not_a_traceback(self):
+        _, log = self.cut_upload(reset=True)
+        self.assertNotIn("Traceback", log)
+        self.assertIn("connection dropped: ConnectionResetError", log)
+        self.assertEqual('"0"', self.call("GET", "/state")[2]["ETag"])
 
     def test_nothing_is_served_before_a_web_build_is_published(self):
         self.assertEqual(404, self.call("GET", "/xrnhome/")[0])
