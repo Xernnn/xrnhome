@@ -31,6 +31,7 @@ sync password.
                               the laptop version, from `release.mjs --web`, in <data>/web. It
                               needs the login too, so the browser asks once and then sends it
                               with the app's own requests, and nothing has to store a password
+    HEAD                      any GET above, answered without its body
 
 Every write keeps the copy it replaces: the last KEEP_VERSIONS of them in history/, and the
 first of each day in daily/ for KEEP_DAYS. A photo goes once none of those name it any more, and
@@ -494,6 +495,16 @@ class Handler(BaseHTTPRequestHandler):
         who = headers.get("X-Forwarded-For", self.client_address[0]) if headers else "-"
         sys.stderr.write(f"{who} {fmt % a}".translate(LOG_ESCAPES) + "\n")
 
+    def handle(self):
+        # A caller hanging up, mid-upload or before the answer is out, is the network, not a fault
+        # here: a phone loses its signal, a laptop shuts its lid. One line says so; socketserver
+        # printed some 30 lines of traceback for each, which a log reader shows as an error.
+        try:
+            super().handle()
+        except ConnectionError as e:
+            self.close_connection = True
+            self.log_message("connection dropped: %s", type(e).__name__)
+
     def parse_request(self):
         if not super().parse_request():
             return False
@@ -541,7 +552,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(size))
             self.end_headers()
-            shutil.copyfileobj(f, self.wfile)
+            if self.command != "HEAD":
+                shutil.copyfileobj(f, self.wfile)
 
     def length(self, limit):
         """The request body's length, or None once an error has been answered."""
@@ -633,6 +645,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_file(os.path.join(args.data, "web", name), ctype,
                        cache="no-cache" if fresh else FOREVER, csp=WEB_CSP)
 
+    # A GET's answer without its body, as curl -I and monitors ask: http.server answered 501
+    # "Unsupported method", which xrnhub's log page shows as an error.
+    do_HEAD = do_GET
+
     def do_PUT(self):
         path = self.route()
         if path != "/state" and not path.startswith("/photos/"):
@@ -645,8 +661,14 @@ class Handler(BaseHTTPRequestHandler):
         length = self.length(MAX_BODY)
         if length is None:
             return
+        raw = self.rfile.read(length)
+        if len(raw) < length:
+            # The connection closed part way, as a reverse proxy closes this side when the
+            # device's drops. What came is no snapshot, so it isn't read as one.
+            self.close_connection = True
+            return self.send(400, "the upload stopped short")
         try:
-            data = json.loads(self.rfile.read(length))
+            data = json.loads(raw)
             if not isinstance(data, dict) or not isinstance(data.get("items"), list):
                 raise ValueError
         except ValueError:
