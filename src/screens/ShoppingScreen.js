@@ -1,13 +1,12 @@
 import React, { Fragment, useEffect, useMemo, useState } from "react";
 import {
   View,
-  Text,
-  TextInput,
   ScrollView,
   TouchableOpacity,
   StyleSheet,
   Share,
 } from "react-native";
+import { Text, TextInput } from "../components/Text";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 
@@ -28,7 +27,7 @@ import { takeOffList, untickChanges } from "../utils/inventoryLogic";
 import { loadCart, saveCart } from "../utils/storage";
 import {
   DEFAULT_ROOM,
-  FONTS,
+  FIGURES,
   ROOMS,
   SPACING,
   RADIUS,
@@ -566,7 +565,7 @@ const createStyles = (colors) =>
       color: colors.textSecondary,
     },
     sectionCountText: {
-      fontFamily: FONTS.monoMedium,
+      ...FIGURES,
       fontSize: 12,
       color: colors.textSecondary,
       marginLeft: 8,
@@ -645,7 +644,7 @@ const createStyles = (colors) =>
       marginLeft: 4,
     },
     stepValue: {
-      fontFamily: FONTS.mono,
+      ...TYPE.figure,
       fontSize: 15,
       color: colors.textPrimary,
     },

@@ -1,3 +1,4 @@
+import "./fonts.css";
 import "./desktop.css";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -13,7 +14,7 @@ import RoomScreen from "../screens/RoomScreen";
 import SettingsScreen from "../screens/SettingsScreen";
 import ShoppingScreen from "../screens/ShoppingScreen";
 import UndoToast from "../components/UndoToast";
-import { Wordmark } from "../components/ui";
+import { Logo } from "../components/ui";
 import { ROOMS } from "../utils/constants";
 import { Icon } from "./parts";
 import QuickAdd from "./QuickAdd";
@@ -153,7 +154,7 @@ export default function DesktopApp() {
       style={themeVars(colors, isDark)}
     >
       <header className="dk-top">
-        <Wordmark size={19} />
+        <Logo size={30} />
         <nav className="dk-tabs" aria-label="Pages">
           {ROOMS.map((r) => (
             <button

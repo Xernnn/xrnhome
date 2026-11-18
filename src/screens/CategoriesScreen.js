@@ -5,10 +5,9 @@ import {
   Alert,
   ScrollView,
   StyleSheet,
-  Text,
-  TextInput,
   View,
 } from "react-native";
+import { Text, TextInput } from "../components/Text";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useInventory } from "../context/InventoryContext";

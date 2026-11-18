@@ -1,5 +1,6 @@
 import React, { useMemo } from "react";
-import { View, TextInput, TouchableOpacity, StyleSheet } from "react-native";
+import { View, TouchableOpacity, StyleSheet } from "react-native";
+import { TextInput } from "./Text";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { RADIUS, SPACING } from "../utils/constants";
 import { useTheme } from "../context/ThemeContext";

@@ -1,15 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
-  Text,
-  TextInput,
   TouchableOpacity,
   StyleSheet,
   Platform,
 } from "react-native";
+import { Text, TextInput } from "./Text";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useTheme } from "../context/ThemeContext";
-import { FONTS, MAX_QUANTITY } from "../utils/constants";
+import { MAX_QUANTITY, TYPE } from "../utils/constants";
 
 const REPEAT_MS = 90;
 // Android's smallest touch target, in dp. A smaller button reaches it with
@@ -233,12 +232,12 @@ const createStyles = (colors) =>
       alignItems: "center",
     },
     value: {
-      fontFamily: FONTS.mono,
+      ...TYPE.figure,
       fontSize: 18,
       color: colors.textPrimary,
     },
     input: {
-      fontFamily: FONTS.mono,
+      ...TYPE.figure,
       fontSize: 18,
       color: colors.textPrimary,
       textAlign: "center",

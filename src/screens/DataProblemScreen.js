@@ -2,7 +2,8 @@
 // has been written over them, and nothing will be until the person chooses:
 // showing an empty app here is how a damaged list becomes a lost one.
 import React, { useMemo, useState } from "react";
-import { Alert, StyleSheet, Text, View } from "react-native";
+import { Alert, StyleSheet, View } from "react-native";
+import { Text } from "../components/Text";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useInventory } from "../context/InventoryContext";

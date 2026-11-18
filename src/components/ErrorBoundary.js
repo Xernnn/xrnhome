@@ -1,5 +1,6 @@
 import React from "react";
-import { Appearance, ScrollView, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Appearance, ScrollView, StyleSheet, TouchableOpacity, View } from "react-native";
+import { Text } from "./Text";
 
 import { DARK_COLORS, LIGHT_COLORS, TYPE } from "../utils/constants";
 

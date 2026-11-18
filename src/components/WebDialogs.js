@@ -4,7 +4,8 @@
 // to know. Esc presses Cancel. Enter presses the main button, unless pressing it
 // destroys something: that takes a click, as on the phone it takes a tap.
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Modal, Platform, StyleSheet, Text, View } from "react-native";
+import { Alert, Modal, Platform, StyleSheet, View } from "react-native";
+import { Text } from "./Text";
 
 import { useTheme } from "../context/ThemeContext";
 import { TextButton } from "./ui";

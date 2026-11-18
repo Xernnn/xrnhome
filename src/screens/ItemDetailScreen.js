@@ -1,12 +1,11 @@
 import React, { useMemo, useState } from "react";
 import {
   View,
-  Text,
   ScrollView,
-  TextInput,
   StyleSheet,
   Alert,
 } from "react-native";
+import { Text, TextInput } from "../components/Text";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 
@@ -31,7 +30,6 @@ import {
 import { haptics } from "../utils/haptics";
 import { pickDate } from "../utils/datePicker";
 import {
-  FONTS,
   OPENED_STEP,
   RADIUS,
   SPACING,
@@ -373,7 +371,7 @@ const createStyles = (colors) =>
       flex: 1,
     },
     stockValue: {
-      fontFamily: FONTS.mono,
+      ...TYPE.figure,
       fontSize: 30,
       color: colors.textPrimary,
     },

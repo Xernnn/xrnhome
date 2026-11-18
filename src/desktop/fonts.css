@@ -1,0 +1,61 @@
+/* MiSans Latin by Xiaomi, the family's font, one official file per weight, set one
+   step lighter than their names as on the phone (app.json): 600 is its Demibold and
+   700 its Semibold. Its Bold and Heavy aren't here: they draw "@" as "&". Text the
+   app's own Text doesn't draw asks for react-native-web's default stack, which
+   starts with -apple-system, so that name is MiSans too. */
+
+@font-face {
+  font-family: "MiSans";
+  src: url("/xrnhome/fonts/MiSansLatin-Regular.woff2") format("woff2");
+  font-weight: 100 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "MiSans";
+  src: url("/xrnhome/fonts/MiSansLatin-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-display: swap;
+}
+@font-face {
+  font-family: "MiSans";
+  src: url("/xrnhome/fonts/MiSansLatin-Demibold.woff2") format("woff2");
+  font-weight: 600;
+  font-display: swap;
+}
+@font-face {
+  font-family: "MiSans";
+  src: url("/xrnhome/fonts/MiSansLatin-Semibold.woff2") format("woff2");
+  font-weight: 700 900;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "-apple-system";
+  src: url("/xrnhome/fonts/MiSansLatin-Regular.woff2") format("woff2");
+  font-weight: 100 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "-apple-system";
+  src: url("/xrnhome/fonts/MiSansLatin-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-display: swap;
+}
+@font-face {
+  font-family: "-apple-system";
+  src: url("/xrnhome/fonts/MiSansLatin-Demibold.woff2") format("woff2");
+  font-weight: 600;
+  font-display: swap;
+}
+@font-face {
+  font-family: "-apple-system";
+  src: url("/xrnhome/fonts/MiSansLatin-Semibold.woff2") format("woff2");
+  font-weight: 700 900;
+  font-display: swap;
+}
+
+/* A field shows it has the keyboard by its own border, not the browser's box */
+input:focus,
+textarea:focus {
+  outline: none;
+}

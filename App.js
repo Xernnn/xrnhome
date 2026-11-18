@@ -2,7 +2,6 @@ import "react-native-gesture-handler";
 import React, { useEffect } from "react";
 import { Alert, Platform, View, StyleSheet, useWindowDimensions } from "react-native";
 import { StatusBar } from "expo-status-bar";
-import { useFonts } from "expo-font";
 import * as SplashScreen from "expo-splash-screen";
 import {
   NavigationContainer,
@@ -37,6 +36,7 @@ import WebDialogs, { installWebDialogs } from "./src/components/WebDialogs";
 import DesktopApp from "./src/desktop/DesktopApp";
 import {
   DESKTOP_WIDTH,
+  FONT_FAMILY,
   FORM_WIDTH,
   PAGE_WIDTH,
   ROOMS,
@@ -46,7 +46,7 @@ import {
 
 installWebDialogs();
 
-// Kept up until the fonts are in, so the app never opens on a blank frame.
+// Kept up until the first frame is drawn, so the app never opens on a blank one.
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
 const Stack = createStackNavigator();
@@ -203,6 +203,7 @@ function RootNavigation() {
           },
           tabBarLabelStyle: {
             ...TYPE.tab,
+            fontFamily: FONT_FAMILY,
             marginTop: 4,
           },
           tabBarIcon: ({ color, focused }) => (
@@ -249,20 +250,12 @@ function RootNavigation() {
   );
 }
 
+// MiSans needs no loading: it's built into the Android app (app.json) and is a
+// stylesheet's in the browser (src/desktop/fonts.css).
 export default function App() {
-  const [fontsLoaded, fontError] = useFonts({
-    "GeistMono-Bold": require("./assets/fonts/GeistMono-Bold.ttf"),
-    "GeistMono-Medium": require("./assets/fonts/GeistMono-Medium.ttf"),
-  });
-  const ready = fontsLoaded || !!fontError;
   useEffect(() => {
-    if (ready) {
-      SplashScreen.hideAsync().catch(() => {});
-    }
-  }, [ready]);
-  if (!ready) {
-    return null;
-  }
+    SplashScreen.hideAsync().catch(() => {});
+  }, []);
   return (
     <ErrorBoundary>
       <SafeAreaProvider>

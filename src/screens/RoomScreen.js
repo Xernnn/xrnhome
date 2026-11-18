@@ -1,12 +1,12 @@
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
   FlatList,
-  Text,
   TouchableOpacity,
   View,
   StyleSheet,
   useWindowDimensions,
 } from "react-native";
+import { Text } from "../components/Text";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 

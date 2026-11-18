@@ -1,11 +1,11 @@
 import React, { useEffect, useMemo, useRef } from "react";
 import {
   Animated,
-  Text,
   TouchableOpacity,
   StyleSheet,
   AccessibilityInfo,
 } from "react-native";
+import { Text } from "./Text";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 

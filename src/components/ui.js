@@ -9,16 +9,15 @@ import {
   Modal,
   Platform,
   Pressable,
-  Text,
   TouchableOpacity,
   View,
   StyleSheet,
 } from "react-native";
+import { Text } from "./Text";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { useTheme } from "../context/ThemeContext";
 import {
-  BRAND,
-  FONTS,
+  FIGURES,
   RADIUS,
   SPACING,
   TYPE,
@@ -229,23 +228,18 @@ export function PageTitle({ title, subtitle, actions }) {
   );
 }
 
-// "xrnhome" in the mono face, after the launcher icon's colour.
-export function Wordmark({ size = 20 }) {
-  const { colors } = useTheme();
+// The app's tile, the same as its launcher icon (assets/icon.svg). It stands
+// for the name wherever the name would be a title; the name is only read out.
+const LOGO = require("../../assets/logo.png");
+
+export function Logo({ size = 30 }) {
   return (
-    <View style={{ flexDirection: "row", alignItems: "center" }}>
-      <MaterialCommunityIcons name="home-variant" size={size} color={BRAND} />
-      <Text
-        style={{
-          fontFamily: FONTS.mono,
-          fontSize: size,
-          color: colors.textPrimary,
-          marginLeft: 6,
-        }}
-      >
-        xrnhome
-      </Text>
-    </View>
+    <Image
+      source={LOGO}
+      style={{ width: size, height: size }}
+      accessibilityRole="image"
+      accessibilityLabel="xrnhome"
+    />
   );
 }
 
@@ -716,7 +710,7 @@ const createStyles = (colors) =>
     },
     chipCount: {
       marginLeft: 6,
-      fontFamily: FONTS.monoMedium,
+      ...FIGURES,
       fontSize: 12,
       color: colors.textSecondary,
     },
