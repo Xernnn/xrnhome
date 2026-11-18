@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from "react";
-import { View, Text, ScrollView, StyleSheet, Alert, Platform } from "react-native";
+import { View, ScrollView, StyleSheet, Alert, Platform } from "react-native";
+import { Text } from "../components/Text";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useInventory } from "../context/InventoryContext";
@@ -13,12 +14,12 @@ import {
   SectionLabel,
   Segmented,
   SwitchRow,
-  Wordmark,
+  Logo,
 } from "../components/ui";
 import { haptics } from "../utils/haptics";
 import { exportData, importData } from "../utils/backup";
 import { installedBuild, installedVersion, updatesSupported } from "../utils/updates";
-import { FONTS, SPACING, TYPE, itemCount as plural } from "../utils/constants";
+import { FIGURES, SPACING, TYPE, itemCount as plural } from "../utils/constants";
 
 const THEME_OPTIONS = [
   { value: "system", label: "System", icon: "theme-light-dark" },
@@ -223,7 +224,11 @@ export default function SettingsScreen({ navigation }) {
             first={!reminders.supported}
             icon="tag-multiple-outline"
             title="Your categories"
-            subtitle={categories.length > 0 ? `${categories.length} of your own` : undefined}
+            trailing={
+              categories.length > 0 ? (
+                <Text style={styles.count}>{categories.length}</Text>
+              ) : undefined
+            }
             onPress={() => navigation.navigate("Categories")}
           />
         </GroupCard>
@@ -254,12 +259,15 @@ export default function SettingsScreen({ navigation }) {
         <SectionLabel>About</SectionLabel>
         <GroupCard>
           <View style={styles.about}>
-            <Wordmark size={20} />
-            <Text style={styles.aboutLine}>
-              {plural(items.length)}
-              {version ? ` · version ${version}` : ""}
-              {build ? ` · build ${build}` : ""}
-            </Text>
+            <Logo size={40} />
+            <View style={styles.aboutText}>
+              <Text style={styles.aboutLine}>
+                {plural(items.length)}
+                {version ? ` · ${version}` : ""}
+                {build ? ` · build ${build}` : ""}
+              </Text>
+              <Text style={styles.credit}>Font: MiSans by Xiaomi</Text>
+            </View>
           </View>
         </GroupCard>
         <View style={styles.bottomSpacer} />
@@ -282,13 +290,28 @@ const createStyles = (colors) =>
       paddingTop: 8,
     },
     about: {
+      flexDirection: "row",
+      alignItems: "center",
       padding: 16,
     },
+    aboutText: {
+      flex: 1,
+      marginLeft: 14,
+    },
     aboutLine: {
+      ...TYPE.bodySmall,
+      ...FIGURES,
+      color: colors.textPrimary,
+    },
+    credit: {
       ...TYPE.caption,
-      fontFamily: FONTS.monoMedium,
       color: colors.textSecondary,
-      marginTop: 8,
+      marginTop: 2,
+    },
+    count: {
+      ...TYPE.body,
+      ...FIGURES,
+      color: colors.textSecondary,
     },
     bottomSpacer: {
       height: 24,

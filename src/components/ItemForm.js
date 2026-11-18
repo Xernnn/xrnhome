@@ -1,12 +1,13 @@
-// The Add and Edit item page, laid out like xrnrule's Edit block: Cancel, the
-// title and Save in the bar (Save waits until the item has a name), then one
-// card per question, and on Edit a red "Delete item" at the bottom. Leaving with
-// unsaved changes asks first, whichever way the person leaves.
+// The Add and Edit item page. Cancel, the title and Save sit in the bar (Save
+// waits for a name), then the item from the top down: its photo, its name,
+// its category, how much there is, when it expires, when it goes on the
+// shopping list and a note, each card a column of rows with the label on the
+// left and what sets it on the right. On Edit, "Delete item" comes last, set
+// apart. Leaving with unsaved changes asks first, whichever way the person
+// leaves.
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
-  Text,
-  TextInput,
   ScrollView,
   TouchableOpacity,
   Image,
@@ -24,15 +25,20 @@ import DateTimePicker from "@react-native-community/datetimepicker";
 import { useInventory } from "../context/InventoryContext";
 import { useTheme } from "../context/ThemeContext";
 import QuantityControl from "./QuantityControl";
+import { Text, TextInput } from "./Text";
 import {
-  Card,
+  BarButton,
   ChoiceSheet,
-  FormSection,
+  FieldRow,
+  GroupCard,
   Hairline,
+  OutlinePill,
+  SectionLabel,
   Segmented,
+  SwitchField,
   TextButton,
   TopBar,
-  XSwitch,
+  ValuePill,
 } from "./ui";
 import { middayOf, pickDate } from "../utils/datePicker";
 import {
@@ -44,7 +50,6 @@ import {
   TYPE,
   categoryColor,
   categoryExists,
-  describeRestockRule,
   formatExpiryDate,
   getCategoryMeta,
   getRestockRule,
@@ -68,6 +73,9 @@ const MATCH_OPTIONS = [
 ];
 
 const MAX_SUGGESTIONS = 3;
+
+// Every stepper on the page is this wide between its buttons, so they line up.
+const STEPPER = { size: 34, valueWidth: 64 };
 
 export default function ItemForm({
   mode,
@@ -114,7 +122,9 @@ export default function ItemForm({
   const [newCategory, setNewCategory] = useState(null);
   const [saving, setSaving] = useState(false);
 
-  const hint = !name.trim() ? "Give it a name" : null;
+  const named = name.trim().length > 0;
+  const [nameFocused, setNameFocused] = useState(false);
+  const [noteFocus, setNoteFocus] = useState(false);
   const selectedMeta = getCategoryMeta(category);
   const tint = categoryColor(selectedMeta, isDark);
   const rule = {
@@ -157,10 +167,8 @@ export default function ItemForm({
         }
         event.preventDefault();
         Alert.alert(
-          "Discard your changes?",
-          mode === "add"
-            ? "This item hasn't been saved."
-            : "What you changed here hasn't been saved.",
+          mode === "add" ? "Discard this item?" : "Discard your changes?",
+          undefined,
           [
             { text: "Keep editing", style: "cancel" },
             {
@@ -304,7 +312,7 @@ export default function ItemForm({
   ];
 
   const save = async () => {
-    if (hint || saving) {
+    if (!named || saving) {
       return;
     }
     Keyboard.dismiss();
@@ -347,52 +355,17 @@ export default function ItemForm({
     onOpenExisting(item);
   };
 
-  const switchLine = (label, value, onValueChange, first = false) => (
-    <>
-      {first ? null : <Hairline inset={0} />}
-      <TouchableOpacity
-        activeOpacity={0.6}
-        style={styles.switchLine}
-        onPress={() => onValueChange(!value)}
-      >
-        <View style={styles.flex}>
-          <Text style={styles.lineTitle}>{label}</Text>
-        </View>
-        <XSwitch value={value} onValueChange={onValueChange} />
-      </TouchableOpacity>
-    </>
-  );
-
-  const stepperLine = (label, control) => (
-    <>
-      <Hairline inset={0} />
-      <View style={styles.stepperLine}>
-        <Text style={[styles.lineTitle, styles.flex]}>{label}</Text>
-        {control}
-      </View>
-    </>
-  );
+  const dateText = formatExpiryDate(expiryDate.toISOString());
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
       <TopBar
         left={<TextButton label="Cancel" flush onPress={onCancel} />}
         title={mode === "add" ? "New item" : "Edit item"}
-        right={
-          <TextButton
-            label={saving ? "Saving" : "Save"}
-            strong
-            flush
-            onPress={save}
-            disabled={!!hint || saving}
-          />
-        }
+        right={<BarButton label="Save" onPress={save} disabled={!named || saving} />}
       />
 
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior="padding"
-      >
+      <KeyboardAvoidingView style={styles.flex} behavior="padding">
         <ScrollView
           ref={scroll}
           style={styles.flex}
@@ -400,81 +373,86 @@ export default function ItemForm({
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          {hint ? <Text style={styles.hint}>{hint}</Text> : null}
-
-          <Card>
-            <View style={styles.nameRow}>
-              <TouchableOpacity
-                activeOpacity={0.8}
-                onPress={() => setPhotoSheet(true)}
-                style={[
-                  styles.photoTile,
-                  { backgroundColor: mixHex(tint, colors.surface, isDark ? 0.16 : 0.1) },
-                ]}
-                accessibilityRole="button"
-                accessibilityLabel={imageUri ? "Change the photo" : "Add a photo"}
-              >
-                {imageUri ? (
-                  <Image source={{ uri: imageUri }} style={styles.photo} />
-                ) : (
-                  <MaterialCommunityIcons
-                    name={selectedMeta.icon}
-                    size={30}
-                    color={tint}
-                  />
-                )}
-                <View style={styles.photoBadge}>
-                  <MaterialCommunityIcons
-                    name={imageUri ? "pencil" : "camera-plus"}
-                    size={13}
-                    color={colors.textPrimary}
-                  />
-                </View>
-              </TouchableOpacity>
-              <TextInput
-                style={styles.nameInput}
-                value={name}
-                onChangeText={setName}
-                placeholder="Item name"
-                placeholderTextColor={colors.textSecondary}
-                returnKeyType="done"
-                multiline
-                submitBehavior="blurAndSubmit"
-                autoFocus={mode === "add"}
-                accessibilityLabel="Item name"
-                // At a keyboard, Enter saves, so adding several things is quick.
-                {...(Platform.OS === "web"
-                  ? { blurOnSubmit: true, onSubmitEditing: save }
-                  : {})}
+          <View style={styles.photoWrap}>
+            <TouchableOpacity
+              activeOpacity={0.8}
+              onPress={() => setPhotoSheet(true)}
+              style={[
+                styles.photoTile,
+                { backgroundColor: mixHex(tint, colors.surface, isDark ? 0.16 : 0.1) },
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel={imageUri ? "Change the photo" : "Add a photo"}
+            >
+              {imageUri ? (
+                <Image source={{ uri: imageUri }} style={styles.photo} />
+              ) : (
+                <MaterialCommunityIcons name={selectedMeta.icon} size={44} color={tint} />
+              )}
+            </TouchableOpacity>
+            <View style={styles.photoBadge} pointerEvents="none">
+              <MaterialCommunityIcons
+                name={imageUri ? "pencil" : "camera-plus-outline"}
+                size={16}
+                color={colors.textPrimary}
               />
             </View>
-            {suggestions.map((item) => (
-              <TouchableOpacity
-                key={item.id}
-                activeOpacity={0.7}
-                style={styles.suggestion}
-                onPress={() => openExisting(item)}
-                accessibilityRole="button"
-              >
-                <View style={styles.flex}>
-                  <Text style={styles.suggestionName} numberOfLines={1}>
-                    {item.name}
-                  </Text>
-                  <Text style={styles.lineSubtitle} numberOfLines={1}>
-                    Already here · {getRoomMeta(item.room).label} · {item.category} ·{" "}
-                    {stockText(item)}
-                  </Text>
-                </View>
-                <MaterialCommunityIcons
-                  name="chevron-right"
-                  size={20}
-                  color={colors.textSecondary}
-                />
-              </TouchableOpacity>
-            ))}
-          </Card>
+          </View>
 
-          <FormSection title="What is it?">
+          <View style={[styles.card, nameFocused && styles.cardFocused]}>
+            <TextInput
+              style={styles.nameInput}
+              value={name}
+              onChangeText={setName}
+              onFocus={() => setNameFocused(true)}
+              onBlur={() => setNameFocused(false)}
+              placeholder="Name"
+              placeholderTextColor={colors.textSecondary}
+              returnKeyType="done"
+              // A long name wraps on the phone; in a browser the box is one line
+              // and Enter saves, so adding several things is quick.
+              multiline={Platform.OS !== "web"}
+              submitBehavior="blurAndSubmit"
+              autoFocus={mode === "add"}
+              accessibilityLabel="Item name"
+              {...(Platform.OS === "web" ? { onSubmitEditing: save } : {})}
+            />
+            {suggestions.map((item) => (
+              <React.Fragment key={item.id}>
+                <Hairline />
+                <TouchableOpacity
+                  activeOpacity={0.7}
+                  style={styles.suggestion}
+                  onPress={() => openExisting(item)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Open ${item.name}`}
+                >
+                  <MaterialCommunityIcons
+                    name="arrow-top-right"
+                    size={18}
+                    color={colors.textSecondary}
+                    style={styles.suggestionIcon}
+                  />
+                  <View style={styles.flex}>
+                    <Text style={styles.suggestionName} numberOfLines={1}>
+                      {item.name}
+                    </Text>
+                    <Text style={styles.suggestionWhere} numberOfLines={1}>
+                      {getRoomMeta(item.room).label} · {item.category} · {stockText(item)}
+                    </Text>
+                  </View>
+                  <MaterialCommunityIcons
+                    name="chevron-right"
+                    size={20}
+                    color={colors.textSecondary}
+                  />
+                </TouchableOpacity>
+              </React.Fragment>
+            ))}
+          </View>
+
+          <SectionLabel>Category</SectionLabel>
+          <View style={[styles.card, styles.cardPadded]}>
             <Segmented options={ROOM_OPTIONS} value={room} onChange={changeRoom} />
             <View style={styles.chips}>
               {getRoomCategories(room).map((cat) => {
@@ -490,8 +468,8 @@ export default function ItemForm({
                     style={[
                       styles.chip,
                       active && {
-                        backgroundColor: mixHex(color, colors.surface, isDark ? 0.16 : 0.1),
-                        borderColor: mixHex(color, colors.surface, isDark ? 0.55 : 0.45),
+                        backgroundColor: mixHex(color, colors.surface, isDark ? 0.18 : 0.12),
+                        borderColor: color,
                       },
                     ]}
                   >
@@ -506,14 +484,11 @@ export default function ItemForm({
                 <TouchableOpacity
                   activeOpacity={0.7}
                   accessibilityRole="button"
+                  accessibilityLabel="New category"
                   onPress={() => setNewCategory("")}
-                  style={styles.chip}
+                  style={[styles.chip, styles.chipNew]}
                 >
-                  <MaterialCommunityIcons
-                    name="plus"
-                    size={16}
-                    color={colors.textSecondary}
-                  />
+                  <MaterialCommunityIcons name="plus" size={16} color={colors.textSecondary} />
                   <Text style={styles.chipText}>New</Text>
                 </TouchableOpacity>
               ) : null}
@@ -524,48 +499,47 @@ export default function ItemForm({
                   style={styles.newCategoryInput}
                   value={newCategory}
                   onChangeText={setNewCategory}
-                  placeholder="Category name"
+                  placeholder="New category"
                   placeholderTextColor={colors.textSecondary}
                   maxLength={24}
                   autoFocus
                   returnKeyType="done"
                   onSubmitEditing={submitCategory}
+                  accessibilityLabel="New category"
                 />
                 <TextButton label="Add" strong onPress={submitCategory} />
                 <TextButton label="Cancel" onPress={() => setNewCategory(null)} />
               </View>
             ) : null}
-          </FormSection>
+          </View>
 
-          <FormSection title="How many do you have?">
-            <View style={styles.unitsRow}>
+          <SectionLabel>Amount</SectionLabel>
+          <GroupCard>
+            <FieldRow label="Count" first>
               <QuantityControl
                 value={quantity}
                 onChange={setQuantity}
                 min={0}
-                label="How many"
+                label="Count"
+                {...STEPPER}
               />
-              <TouchableOpacity
-                activeOpacity={0.7}
-                style={styles.unitToggle}
+            </FieldRow>
+            <FieldRow label="Unit">
+              <ValuePill
+                label={unit}
+                open={unitOpen}
                 onPress={() => setUnitOpen((prev) => !prev)}
-                accessibilityRole="button"
-                accessibilityLabel={`Unit: ${unit}. Change`}
-              >
-                <Text style={styles.unitToggleText}>{unit}</Text>
-                <MaterialCommunityIcons
-                  name={unitOpen ? "chevron-up" : "chevron-down"}
-                  size={18}
-                  color={colors.textSecondary}
-                />
-              </TouchableOpacity>
-            </View>
+                accessibilityLabel={`Unit, ${unit}`}
+              />
+            </FieldRow>
             {unitOpen ? (
-              <View style={styles.chips}>
+              <View style={[styles.chips, styles.unitChips]}>
                 {QUANTITY_UNITS.map((u) => (
                   <TouchableOpacity
                     key={u}
                     activeOpacity={0.7}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: unit === u }}
                     onPress={() => {
                       setUnit(u);
                       setUnitOpen(false);
@@ -579,102 +553,36 @@ export default function ItemForm({
                 ))}
               </View>
             ) : null}
-            <View style={styles.lines}>
-              {switchLine("Track in %", openedEnabled, setOpenedEnabled)}
-              {openedEnabled
-                ? stepperLine(
-                    "Open one",
-                    <QuantityControl
-                      value={openedPercent}
-                      onChange={setOpenedPercent}
-                      min={0}
-                      max={100}
-                      step={OPENED_STEP}
-                      unitLabel="%"
-                      size={34}
-                    />
-                  )
-                : null}
-            </View>
-          </FormSection>
-
-          <FormSection title="When should it go on the shopping list?">
-            <View style={styles.linesFirst}>
-              {switchLine("When it's running low", recurring, setRecurring, true)}
-              {recurring
-                ? stepperLine(
-                    "With this many left",
-                    <QuantityControl
-                      value={restockUnits}
-                      onChange={setRestockUnits}
-                      min={0}
-                      max={999}
-                      size={34}
-                      label="With this many left"
-                    />
-                  )
-                : null}
-              {recurring && openedEnabled
-                ? switchLine("Also look at the open one", watchOpen, setWatchOpen)
-                : null}
-              {recurring && openedEnabled && watchOpen
-                ? stepperLine(
-                    "With this much left in it",
-                    <QuantityControl
-                      value={restockPercent}
-                      onChange={setRestockPercent}
-                      min={0}
-                      max={90}
-                      step={OPENED_STEP}
-                      unitLabel="%"
-                      size={34}
-                    />
-                  )
-                : null}
-            </View>
-            {recurring && openedEnabled && watchOpen ? (
-              <View style={styles.matchRow}>
-                <Segmented
-                  options={MATCH_OPTIONS}
-                  value={restockMatch}
-                  onChange={setRestockMatch}
-                  style={styles.flex}
+            <SwitchField label="Track in %" value={openedEnabled} onValueChange={setOpenedEnabled} />
+            {openedEnabled ? (
+              <FieldRow label="Open one">
+                <QuantityControl
+                  value={openedPercent}
+                  onChange={setOpenedPercent}
+                  min={0}
+                  max={100}
+                  step={OPENED_STEP}
+                  unitLabel="%"
+                  label="Open one"
+                  {...STEPPER}
                 />
-              </View>
+              </FieldRow>
             ) : null}
-            {recurring ? (
-              <Text style={styles.note}>Goes on the list {describeRestockRule(rule)}</Text>
-            ) : null}
-          </FormSection>
+          </GroupCard>
 
-          <FormSection title="Does it expire?">
-            <View style={styles.linesFirst}>
-              {switchLine("Expiry date", expiryEnabled, toggleExpiry, true)}
-            </View>
+          <SectionLabel>Expiry</SectionLabel>
+          <GroupCard>
+            <SwitchField label="Expiry date" value={expiryEnabled} onValueChange={toggleExpiry} first />
             {expiryEnabled ? (
-              <TouchableOpacity
-                activeOpacity={0.7}
-                style={styles.dateButton}
-                onPress={chooseDate}
-                accessibilityRole="button"
-                accessibilityLabel={`Expiry date ${formatExpiryDate(
-                  expiryDate.toISOString()
-                )}. Tap to change.`}
-              >
-                <MaterialCommunityIcons
-                  name="calendar"
-                  size={20}
-                  color={colors.textSecondary}
+              <FieldRow label="Date">
+                <ValuePill
+                  label={dateText}
+                  icon="calendar-blank-outline"
+                  open={iosPickerOpen}
+                  onPress={chooseDate}
+                  accessibilityLabel={`Expiry date, ${dateText}`}
                 />
-                <Text style={styles.dateButtonText}>
-                  {formatExpiryDate(expiryDate.toISOString())}
-                </Text>
-                <MaterialCommunityIcons
-                  name="chevron-down"
-                  size={20}
-                  color={colors.textSecondary}
-                />
-              </TouchableOpacity>
+              </FieldRow>
             ) : null}
             {expiryEnabled && iosPickerOpen ? (
               <DateTimePicker
@@ -685,37 +593,95 @@ export default function ItemForm({
                 themeVariant={isDark ? "dark" : "light"}
               />
             ) : null}
-          </FormSection>
+          </GroupCard>
 
-          <FormSection title="Anything to remember?">
+          <SectionLabel>Shopping list</SectionLabel>
+          <GroupCard>
+            <SwitchField
+              label="When it's running low"
+              value={recurring}
+              onValueChange={setRecurring}
+              first
+            />
+            {recurring ? (
+              <FieldRow label="Down to">
+                <QuantityControl
+                  value={restockUnits}
+                  onChange={setRestockUnits}
+                  min={0}
+                  max={999}
+                  label="Down to"
+                  {...STEPPER}
+                />
+              </FieldRow>
+            ) : null}
+            {recurring && openedEnabled ? (
+              <SwitchField
+                label="Watch the open one"
+                value={watchOpen}
+                onValueChange={setWatchOpen}
+              />
+            ) : null}
+            {recurring && openedEnabled && watchOpen ? (
+              <>
+                <FieldRow label="Open one at">
+                  <QuantityControl
+                    value={restockPercent}
+                    onChange={setRestockPercent}
+                    min={0}
+                    max={90}
+                    step={OPENED_STEP}
+                    unitLabel="%"
+                    label="Open one at"
+                    {...STEPPER}
+                  />
+                </FieldRow>
+                <Hairline />
+                <View style={styles.matchRow}>
+                  <Segmented
+                    options={MATCH_OPTIONS}
+                    value={restockMatch}
+                    onChange={setRestockMatch}
+                  />
+                </View>
+              </>
+            ) : null}
+          </GroupCard>
+
+          <SectionLabel>Note</SectionLabel>
+          <View style={[styles.card, noteFocus && styles.cardFocused]}>
             <TextInput
               style={styles.noteInput}
               value={note}
               onChangeText={setNote}
               onFocus={() => {
                 noteFocused.current = true;
+                setNoteFocus(true);
                 showNote();
               }}
               onBlur={() => {
                 noteFocused.current = false;
+                setNoteFocus(false);
               }}
               onContentSizeChange={() => {
                 if (noteFocused.current) {
                   showNote();
                 }
               }}
-              placeholder="A note"
-              placeholderTextColor={colors.textSecondary}
               multiline
               textAlignVertical="top"
               accessibilityLabel="Note"
             />
-          </FormSection>
+          </View>
 
           {mode === "edit" && onDelete ? (
-            <View style={styles.deleteWrap}>
-              <TextButton label="Delete item" danger onPress={confirmDelete} />
-            </View>
+            <OutlinePill
+              label="Delete item"
+              icon="trash-can-outline"
+              danger
+              onPress={confirmDelete}
+              style={styles.delete}
+            />
           ) : null}
           <View style={styles.bottomSpacer} />
         </ScrollView>
@@ -742,22 +708,32 @@ const createStyles = (colors) =>
     },
     scrollContent: {
       paddingHorizontal: SPACING.screen,
-      paddingTop: 4,
+      paddingTop: 8,
     },
-    hint: {
-      ...TYPE.caption,
-      color: colors.textSecondary,
-      marginBottom: 8,
-      marginLeft: 4,
+    card: {
+      backgroundColor: colors.surface,
+      borderRadius: RADIUS.card,
+      borderWidth: 1,
+      borderColor: colors.border,
+      overflow: "hidden",
     },
-    nameRow: {
-      flexDirection: "row",
-      alignItems: "center",
+    cardPadded: {
+      padding: 16,
+    },
+    cardFocused: {
+      borderColor: colors.accent,
+    },
+    photoWrap: {
+      alignSelf: "center",
+      marginTop: 4,
+      marginBottom: 18,
     },
     photoTile: {
-      width: 72,
-      height: 72,
-      borderRadius: RADIUS.tile,
+      width: 112,
+      height: 112,
+      borderRadius: RADIUS.card,
+      borderWidth: 1,
+      borderColor: colors.border,
       alignItems: "center",
       justifyContent: "center",
       overflow: "hidden",
@@ -768,48 +744,47 @@ const createStyles = (colors) =>
     },
     photoBadge: {
       position: "absolute",
-      right: 4,
-      bottom: 4,
-      width: 22,
-      height: 22,
-      borderRadius: 11,
+      right: -6,
+      bottom: -6,
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: colors.border,
       backgroundColor: colors.surface,
       alignItems: "center",
       justifyContent: "center",
     },
+    nameInput: {
+      ...TYPE.title,
+      fontSize: 20,
+      minHeight: 58,
+      paddingHorizontal: 16,
+      paddingTop: 16,
+      paddingBottom: 14,
+      color: colors.textPrimary,
+      textAlignVertical: "center",
+    },
     suggestion: {
       flexDirection: "row",
       alignItems: "center",
-      marginTop: 10,
-      paddingTop: 10,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: colors.border,
+      minHeight: 56,
+      paddingHorizontal: 16,
+      paddingVertical: 8,
+    },
+    suggestionIcon: {
+      marginRight: 12,
     },
     suggestionName: {
       ...TYPE.body,
       fontWeight: "600",
       color: colors.textPrimary,
     },
-    newCategory: {
-      flexDirection: "row",
-      alignItems: "center",
-      marginTop: 10,
-    },
-    newCategoryInput: {
-      ...TYPE.body,
-      flex: 1,
-      backgroundColor: colors.surfaceAlt,
-      borderRadius: RADIUS.button,
-      paddingHorizontal: 14,
-      paddingVertical: 9,
-      color: colors.textPrimary,
-    },
-    nameInput: {
-      ...TYPE.bigName,
-      flex: 1,
-      marginLeft: 16,
-      color: colors.textPrimary,
-      paddingVertical: 4,
+    suggestionWhere: {
+      ...TYPE.caption,
+      color: colors.textSecondary,
+      marginTop: 2,
+      marginRight: 12,
     },
     chips: {
       flexDirection: "row",
@@ -817,16 +792,25 @@ const createStyles = (colors) =>
       marginTop: 14,
       gap: 8,
     },
+    unitChips: {
+      marginTop: 0,
+      paddingHorizontal: 16,
+      paddingBottom: 14,
+    },
     chip: {
       flexDirection: "row",
       alignItems: "center",
-      paddingVertical: 8,
+      height: 36,
       paddingHorizontal: 12,
       borderRadius: RADIUS.pill,
       borderWidth: 1,
       borderColor: colors.border,
       backgroundColor: colors.surface,
       gap: 6,
+    },
+    chipNew: {
+      borderStyle: "dashed",
+      borderColor: colors.outline,
     },
     chipText: {
       ...TYPE.bodySmall,
@@ -839,95 +823,36 @@ const createStyles = (colors) =>
       backgroundColor: colors.accentLight,
       borderColor: colors.accent,
     },
-    unitsRow: {
+    newCategory: {
       flexDirection: "row",
       alignItems: "center",
-      justifyContent: "space-between",
+      marginTop: 12,
     },
-    unitToggle: {
-      flexDirection: "row",
-      alignItems: "center",
-      backgroundColor: colors.surfaceAlt,
-      borderRadius: RADIUS.pill,
-      paddingVertical: 9,
-      paddingLeft: 14,
-      paddingRight: 10,
-    },
-    unitToggleText: {
-      ...TYPE.button,
-      color: colors.textPrimary,
-      marginRight: 4,
-    },
-    lines: {
-      marginTop: 14,
-    },
-    linesFirst: {
-      marginTop: -10,
-    },
-    switchLine: {
-      flexDirection: "row",
-      alignItems: "center",
-      minHeight: 56,
-      paddingVertical: 10,
-    },
-    stepperLine: {
-      flexDirection: "row",
-      alignItems: "center",
-      minHeight: 56,
-      paddingVertical: 8,
-    },
-    lineTitle: {
+    newCategoryInput: {
       ...TYPE.body,
-      color: colors.textPrimary,
-    },
-    lineSubtitle: {
-      ...TYPE.caption,
-      color: colors.textSecondary,
-      marginTop: 2,
-      marginRight: 12,
-    },
-    matchRow: {
-      flexDirection: "row",
-      alignItems: "center",
-      marginTop: 6,
-    },
-    note: {
-      ...TYPE.caption,
-      color: colors.textSecondary,
-      marginTop: 10,
-      lineHeight: 17,
-    },
-    dateButton: {
-      flexDirection: "row",
-      alignItems: "center",
+      flex: 1,
+      height: 42,
       backgroundColor: colors.surfaceAlt,
       borderRadius: RADIUS.button,
       paddingHorizontal: 14,
-      paddingVertical: 12,
-      marginTop: 4,
-    },
-    dateButtonText: {
-      ...TYPE.body,
-      flex: 1,
-      fontWeight: "600",
       color: colors.textPrimary,
-      marginLeft: 10,
+    },
+    matchRow: {
+      paddingHorizontal: 16,
+      paddingVertical: 12,
     },
     noteInput: {
       ...TYPE.body,
-      minHeight: 84,
-      backgroundColor: colors.surfaceAlt,
-      borderRadius: RADIUS.button,
-      paddingHorizontal: 14,
-      paddingTop: 12,
-      paddingBottom: 12,
+      minHeight: 96,
+      paddingHorizontal: 16,
+      paddingTop: 14,
+      paddingBottom: 14,
       color: colors.textPrimary,
     },
-    deleteWrap: {
-      alignItems: "center",
-      marginTop: 24,
+    delete: {
+      marginTop: 32,
     },
     bottomSpacer: {
-      height: 32,
+      height: 40,
     },
   });

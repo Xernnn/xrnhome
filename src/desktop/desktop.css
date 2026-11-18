@@ -1,14 +1,6 @@
 /* The page around the app's own screens. The colours come from the theme, through
    the variables DesktopApp sets, so nothing here is a colour of its own. */
 
-@font-face {
-  font-family: "-apple-system";
-  src: url("/xrnhome/fonts/Geist-Variable.woff2") format("woff2");
-  font-weight: 100 900;
-  font-style: normal;
-  font-display: swap;
-}
-
 .dk,
 .dk * {
   box-sizing: border-box;
@@ -24,7 +16,7 @@
   grid-template-rows: auto minmax(0, 1fr);
   background: var(--bg);
   color: var(--text);
-  font-family: -apple-system, sans-serif;
+  font-family: MiSans, sans-serif;
   font-size: 14px;
   text-rendering: geometricPrecision;
   -webkit-font-smoothing: antialiased;
@@ -44,7 +36,10 @@
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
-.dk .dk-add-name:focus-visible {
+/* The app's own fields show the keyboard with their border (fonts.css) */
+.dk .dk-add-name:focus-visible,
+.dk input:not(.dk-field):focus-visible,
+.dk textarea:focus-visible {
   outline: none;
 }
 

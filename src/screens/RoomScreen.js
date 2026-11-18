@@ -1,12 +1,12 @@
 import React, { useCallback, useMemo, useRef, useState } from "react";
 import {
   FlatList,
-  Text,
   TouchableOpacity,
   View,
   StyleSheet,
   useWindowDimensions,
 } from "react-native";
+import { Text } from "../components/Text";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 
@@ -51,6 +51,8 @@ const groupByCategory = (list, room) => {
 
 export default function RoomScreen({ navigation, route }) {
   const room = getRoomMeta(route.params && route.params.room);
+  // The laptop's page has its own box for adding, above this one.
+  const quickAdd = !!(route.params && route.params.quickAdd);
   const { items, stepItem, buyItem } = useInventory();
   const { colors, isDark } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
@@ -258,12 +260,14 @@ export default function RoomScreen({ navigation, route }) {
               active={searchOpen}
               onPress={toggleSearch}
             />
-            <RoundIconButton
-              icon="plus"
-              label={`Add to ${room.label}`}
-              outlined
-              onPress={openAddItem}
-            />
+            {quickAdd ? null : (
+              <RoundIconButton
+                icon="plus"
+                label={`Add to ${room.label}`}
+                outlined
+                onPress={openAddItem}
+              />
+            )}
           </>
         }
       />

@@ -1,12 +1,11 @@
 import React, { useMemo, useState } from "react";
 import {
   View,
-  Text,
   ScrollView,
-  TextInput,
   StyleSheet,
   Alert,
 } from "react-native";
+import { Text, TextInput } from "../components/Text";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 
@@ -15,7 +14,7 @@ import { useTheme } from "../context/ThemeContext";
 import EmptyState from "../components/EmptyState";
 import { Stepper } from "../components/QuantityControl";
 import {
-  FormSection,
+  Card,
   GroupCard,
   GroupRow,
   Hairline,
@@ -31,12 +30,10 @@ import {
 import { haptics } from "../utils/haptics";
 import { pickDate } from "../utils/datePicker";
 import {
-  FONTS,
   OPENED_STEP,
   RADIUS,
   SPACING,
   TYPE,
-  describeRestockRule,
   formatExpiryDate,
   getExpiryColor,
   getExpiryLabel,
@@ -46,6 +43,7 @@ import {
   isOnBuyList,
   isTrackingOpened,
   needsExpiryDate,
+  restockFigures,
   unitFor,
 } from "../utils/constants";
 
@@ -70,7 +68,7 @@ function Header({ item, where }) {
   const styles = useMemo(() => createStyles(colors), [colors]);
   return (
     <View style={styles.header}>
-      <ItemThumb item={item} size={64} radius={18} iconSize={30} />
+      <ItemThumb item={item} size={72} radius={RADIUS.tile} iconSize={34} />
       <View style={styles.headerText}>
         <Text style={styles.name}>{item.name}</Text>
         <Text style={styles.where}>{where}</Text>
@@ -207,7 +205,7 @@ export default function ItemDetailScreen({ navigation, route }) {
           </View>
         ) : null}
 
-        <FormSection title="How much is left?">
+        <Card style={styles.stockCard}>
           <View style={styles.stockRow}>
             <View style={styles.stockCell}>
               <Text style={styles.stockValue}>{item.quantity}</Text>
@@ -216,15 +214,9 @@ export default function ItemDetailScreen({ navigation, route }) {
             {showOpenUnit ? (
               <View style={styles.stockCell}>
                 <Text style={styles.stockValue}>{item.openedPercent}%</Text>
-                <Text style={styles.stockLabel}>left in the open one</Text>
+                <Text style={styles.stockLabel}>open one</Text>
               </View>
             ) : null}
-          </View>
-          <Hairline inset={0} />
-          <View style={styles.stepLine}>
-            <Text style={[styles.lineTitle, styles.flex]}>
-              {tracking ? `Use or top up ${OPENED_STEP}%` : "Use or add one"}
-            </Text>
             <Stepper
               onMinus={() => handleStep(-1)}
               onPlus={() => handleStep(1)}
@@ -233,6 +225,7 @@ export default function ItemDetailScreen({ navigation, route }) {
               plusLabel={tracking ? `Add ${OPENED_STEP} percent` : "Add one"}
             />
           </View>
+          <Hairline inset={0} />
           {restockOpen ? (
             <View style={styles.inlineInputRow}>
               <TextInput
@@ -240,11 +233,12 @@ export default function ItemDetailScreen({ navigation, route }) {
                 value={restockValue}
                 onChangeText={setRestockValue}
                 keyboardType="number-pad"
-                placeholder={`How many ${item.unit}`}
+                placeholder={item.unit}
                 placeholderTextColor={colors.textSecondary}
                 accessibilityLabel={`How many ${item.unit}`}
                 selectTextOnFocus
                 autoFocus
+                onSubmitEditing={handleRestock}
               />
               <PillButton
                 label="Add"
@@ -260,7 +254,7 @@ export default function ItemDetailScreen({ navigation, route }) {
               style={styles.restockButton}
             />
           )}
-        </FormSection>
+        </Card>
 
         <SectionLabel>Shopping list</SectionLabel>
         <GroupCard>
@@ -275,20 +269,19 @@ export default function ItemDetailScreen({ navigation, route }) {
           <SwitchRow
             icon="autorenew"
             title="When it's running low"
-            subtitle={
-              item.recurring
-                ? `Goes on the list ${describeRestockRule(getRestockRule(item))}`
-                : "Off"
-            }
+            subtitle={item.recurring ? restockFigures(getRestockRule(item)) : undefined}
             value={!!item.recurring}
             onValueChange={toggleRecurring}
           />
         </GroupCard>
 
         {item.note && item.note.trim().length > 0 ? (
-          <FormSection title="Note">
-            <Text style={styles.noteText}>{item.note}</Text>
-          </FormSection>
+          <>
+            <SectionLabel>Note</SectionLabel>
+            <Card padding={16}>
+              <Text style={styles.noteText}>{item.note}</Text>
+            </Card>
+          </>
         ) : null}
 
         <SectionLabel>History</SectionLabel>
@@ -365,27 +358,28 @@ const createStyles = (colors) =>
       ...TYPE.bodySmall,
       color: colors.textSecondary,
     },
+    stockCard: {
+      marginTop: 14,
+      paddingTop: 16,
+      paddingBottom: 16,
+    },
     stockRow: {
       flexDirection: "row",
-      paddingBottom: 14,
+      alignItems: "center",
+      paddingBottom: 16,
     },
     stockCell: {
       flex: 1,
     },
     stockValue: {
-      fontFamily: FONTS.mono,
-      fontSize: 30,
+      ...TYPE.figure,
+      fontSize: 32,
+      lineHeight: 38,
       color: colors.textPrimary,
     },
     stockLabel: {
-      ...TYPE.caption,
+      ...TYPE.bodySmall,
       color: colors.textSecondary,
-      marginTop: 2,
-    },
-    stepLine: {
-      flexDirection: "row",
-      alignItems: "center",
-      minHeight: 60,
     },
     dateMissing: {
       flexDirection: "row",
@@ -404,17 +398,13 @@ const createStyles = (colors) =>
       color: colors.textPrimary,
       marginLeft: 12,
     },
-    lineTitle: {
-      ...TYPE.body,
-      color: colors.textPrimary,
-    },
     restockButton: {
-      marginTop: 6,
+      marginTop: 16,
     },
     inlineInputRow: {
       flexDirection: "row",
       alignItems: "center",
-      marginTop: 6,
+      marginTop: 16,
     },
     inlineInput: {
       ...TYPE.body,

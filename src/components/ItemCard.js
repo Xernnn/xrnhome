@@ -1,12 +1,13 @@
 import React, { memo, useMemo, useState } from "react";
-import { Image, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { Image, StyleSheet, TouchableOpacity, View } from "react-native";
+import { Text } from "./Text";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 
 import { useTheme } from "../context/ThemeContext";
 import {
-  FONTS,
   OPENED_STEP,
   RADIUS,
+  TYPE,
   categoryColor,
   countText,
   getCategoryMeta,
@@ -183,7 +184,7 @@ const createStyles = (colors) =>
       alignItems: "center",
     },
     value: {
-      fontFamily: FONTS.mono,
+      ...TYPE.figure,
       fontSize: 15,
       color: colors.textPrimary,
     },

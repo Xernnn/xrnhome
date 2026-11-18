@@ -1,13 +1,12 @@
 import React, { Fragment, useEffect, useMemo, useState } from "react";
 import {
   View,
-  Text,
-  TextInput,
   ScrollView,
   TouchableOpacity,
   StyleSheet,
   Share,
 } from "react-native";
+import { Text, TextInput } from "../components/Text";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 
@@ -28,7 +27,7 @@ import { takeOffList, untickChanges } from "../utils/inventoryLogic";
 import { loadCart, saveCart } from "../utils/storage";
 import {
   DEFAULT_ROOM,
-  FONTS,
+  FIGURES,
   ROOMS,
   SPACING,
   RADIUS,
@@ -77,6 +76,7 @@ export default function ShoppingScreen({ navigation }) {
 
   const [newName, setNewName] = useState("");
   const [newRoom, setNewRoom] = useState(DEFAULT_ROOM);
+  const [addFocused, setAddFocused] = useState(false);
   // Items ticked off this trip: id -> { count, before }. They stay on screen,
   // ticked, so a wrong tap can be undone and more can be added. Saved, so the
   // trip survives the app being killed halfway round the shop.
@@ -404,17 +404,19 @@ export default function ShoppingScreen({ navigation }) {
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.addBar}>
+        <View style={[styles.addBar, addFocused && { borderColor: colors.accent }]}>
           <TextInput
             style={styles.addInput}
             value={newName}
             onChangeText={setNewName}
-            placeholder="Add something to buy"
+            onFocus={() => setAddFocused(true)}
+            onBlur={() => setAddFocused(false)}
+            placeholder="Add to the list"
             placeholderTextColor={colors.textSecondary}
             returnKeyType="done"
             onSubmitEditing={addToList}
             submitBehavior="submit"
-            accessibilityLabel="Add something to buy"
+            accessibilityLabel="Add to the list"
           />
           <TouchableOpacity
             activeOpacity={0.7}
@@ -566,7 +568,7 @@ const createStyles = (colors) =>
       color: colors.textSecondary,
     },
     sectionCountText: {
-      fontFamily: FONTS.monoMedium,
+      ...FIGURES,
       fontSize: 12,
       color: colors.textSecondary,
       marginLeft: 8,
@@ -645,7 +647,7 @@ const createStyles = (colors) =>
       marginLeft: 4,
     },
     stepValue: {
-      fontFamily: FONTS.mono,
+      ...TYPE.figure,
       fontSize: 15,
       color: colors.textPrimary,
     },

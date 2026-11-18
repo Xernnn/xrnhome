@@ -94,7 +94,8 @@ npm start
 
 Scan the QR code with Expo Go, or press `a` / `i` in the terminal to open an
 Android or iOS simulator. There are no custom native modules, so Expo Go is
-enough for day-to-day development.
+enough for day-to-day development. Expo Go draws the text in the phone's own
+font: MiSans is built into the app (`app.json`), so it shows in a real build.
 
 The rules behind the app (counting, the shopping list, merging, recovery, the
 sync's safety checks and the colour contrast) have tests:
@@ -251,9 +252,9 @@ amount.
 ### When something goes on the shopping list
 
 Turn on "When it's running low" for things you always buy again, then say how
-low. "With this many left" counts the open one too. For an item counted in %, you
-can also look at the open one, say at 20%, and choose whether it goes on the list
-when both are true or when either is. Running out always puts it on the list. An
+low. "Down to" counts the open one too. For an item counted in %, you can also
+watch the open one, say at 20%, and choose whether it goes on the list when both
+are true or when either is. Running out always puts it on the list. An
 item you haven't set this for goes on when it runs out, or, if it's counted in %,
 when the last one is down to 20%.
 
@@ -272,9 +273,11 @@ src/
   screens/              Food and Household tabs, Shopping, Settings, Home
                         server, Your categories, Add, Edit, Item detail, and
                         the page for unreadable data
-  components/           the shared building blocks (ui.js), the item form,
-                        item cards, category grid, stepper, toast, badges
-  desktop/              the page the laptop version puts round the app's screens
+  components/           the shared building blocks (ui.js), Text in the app's
+                        font (Text.js), the item form, item cards, category
+                        grid, stepper, toast, badges
+  desktop/              the page the laptop version puts round the app's
+                        screens, and the font's stylesheet
   context/              inventory state, theme, reminders, home server sync
                         and updates
   utils/                the inventory rules (inventoryLogic.js), types,
@@ -282,8 +285,10 @@ src/
                         tokens, storage, backups, photos, reminders, haptics,
                         home server requests, sync and updates
 test/                   tests for the rules above
-assets/                 app icon, splash image and the Geist Mono font
-public/fonts/           Geist, the laptop version's text font
+assets/                 the tile (icon.svg, icon-16.svg for the smallest sizes),
+                        the app icons, splash image and logo drawn from it, and
+                        MiSans for Android
+public/                 MiSans and the favicon for the laptop version
 server/                 the home server and its tests
 scripts/release.mjs     builds the APK or the laptop version and publishes it to
                         the home server; release-guard.js holds its checks
@@ -294,8 +299,11 @@ scripts/release.mjs     builds the APK or the laptop version and publishes it to
 React Native, [Expo](https://expo.dev/) (SDK 54),
 [React Navigation](https://reactnavigation.org/) and
 [AsyncStorage](https://react-native-async-storage.github.io/async-storage/) for
-local persistence. Numbers are set in [Geist Mono](https://github.com/vercel/geist-font),
-under the SIL Open Font License ([`assets/fonts/GeistMono-OFL.txt`](assets/fonts/GeistMono-OFL.txt)).
+local persistence. All text, numbers included, is set in
+[MiSans](https://hyperos.mi.com/font) by Xiaomi, free for commercial use and
+embedded under its terms, which ask for the credit kept in Settings → About.
+The files are the official MiSans Latin ones, unchanged; its Bold and Heavy
+aren't bundled, because they draw "@" as "&".
 
 ## License
 

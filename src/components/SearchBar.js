@@ -1,5 +1,6 @@
-import React, { useMemo } from "react";
-import { View, TextInput, TouchableOpacity, StyleSheet } from "react-native";
+import React, { useMemo, useState } from "react";
+import { View, TouchableOpacity, StyleSheet } from "react-native";
+import { TextInput } from "./Text";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { RADIUS, SPACING } from "../utils/constants";
 import { useTheme } from "../context/ThemeContext";
@@ -7,14 +8,15 @@ import { useTheme } from "../context/ThemeContext";
 export default function SearchBar({
   value,
   onChangeText,
-  placeholder = "Search everything",
+  placeholder = "Search",
   autoFocus = false,
 }) {
   const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
+  const [focused, setFocused] = useState(false);
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, focused && { borderColor: colors.accent }]}>
       <MaterialCommunityIcons
         name="magnify"
         size={20}
@@ -30,6 +32,9 @@ export default function SearchBar({
         returnKeyType="search"
         autoCorrect={false}
         autoFocus={autoFocus}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        accessibilityLabel="Search"
       />
       {value && value.length > 0 ? (
         <TouchableOpacity

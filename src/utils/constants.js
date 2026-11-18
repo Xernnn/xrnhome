@@ -52,9 +52,6 @@ export const DARK_COLORS = {
   tabBar: "#2B2B30",
 };
 
-// The launcher icon's tile, for the small mark before the wordmark.
-export const BRAND = "#B8860B";
-
 // Cards use a border, not a shadow. Kept for the few things that float (the
 // undo toast).
 export const SHADOW = {
@@ -86,19 +83,20 @@ export const SPACING = {
   inner: 8,
 };
 
-// The text is the phone's own font, which on the Redmi is MiSans, the face
-// xrnrule bundles. MiSans draws heavier than its weight names, so (as in
-// xrnrule) each style asks for one step lighter than it looks. Geist Mono (OFL,
-// assets/fonts) is for the wordmark and the big numbers.
-export const FONTS = {
-  mono: "GeistMono-Bold",
-  monoMedium: "GeistMono-Medium",
-};
+// MiSans Latin by Xiaomi, the family's font, for all text and the figures too
+// (src/components/Text.js). It draws heavier than its weight names, so as in
+// xrnwallet a weight gets the file one step lighter: 600 is its Demibold, 700
+// its Semibold, and nothing heavier is bundled (its Bold and Heavy draw "@" as
+// "&").
+export const FONT_FAMILY = "MiSans";
+
+// Figures that change in place keep their width.
+export const FIGURES = { fontVariant: ["tabular-nums"] };
 
 export const TYPE = {
   pageTitle: { fontSize: 28, fontWeight: "700", letterSpacing: -0.4 },
-  bigName: { fontSize: 24, fontWeight: "800" },
-  barTitle: { fontSize: 18, fontWeight: "400" },
+  bigName: { fontSize: 24, fontWeight: "700" },
+  barTitle: { fontSize: 17, fontWeight: "600" },
   title: { fontSize: 17, fontWeight: "600" },
   question: { fontSize: 14, fontWeight: "600" },
   body: { fontSize: 16, fontWeight: "400" },
@@ -106,6 +104,8 @@ export const TYPE = {
   caption: { fontSize: 12, fontWeight: "400" },
   button: { fontSize: 15, fontWeight: "600" },
   tab: { fontSize: 11.5, fontWeight: "500" },
+  // A count or a %: the − and + change it in place.
+  figure: { fontWeight: "600", ...FIGURES },
   section: {
     fontSize: 11,
     fontWeight: "700",
@@ -318,23 +318,18 @@ export const isAlmostOut = (item) => {
   return low && openLow;
 };
 
-const leftText = (n) =>
-  n <= 0 ? "it runs out" : n === 1 ? "there's 1 left" : `there are ${n} left`;
-
-// "when there are 2 left and the open one is at 20% or less": the rule as the
-// item's screens say it.
-export const describeRestockRule = (rule) => {
-  const units = leftText(rule.units);
+// The rule in figures, as the item's page shows it under its switch: "2 left",
+// "2 left + 20%" (both have to be true), "2 left or 20%" (either), and "0 left"
+// for when it runs out. The open one at 0 left is gone too, so "both" is "0 left".
+export const restockFigures = (rule) => {
+  const units = `${Math.max(0, rule.units)} left`;
   if (rule.percent === null) {
-    return `when ${units}`;
+    return units;
   }
-  const open = `the open one is at ${rule.percent}% or less`;
   if (rule.match === "any") {
-    return rule.units <= 0
-      ? `when ${open}, or when it runs out`
-      : `when ${units}, or when ${open}`;
+    return `${units} or ${rule.percent}%`;
   }
-  return rule.units <= 0 ? "when it runs out" : `when ${units} and ${open}`;
+  return rule.units <= 0 ? units : `${units} + ${rule.percent}%`;
 };
 
 // Items with stock show on their room's tab.

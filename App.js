@@ -2,7 +2,6 @@ import "react-native-gesture-handler";
 import React, { useEffect } from "react";
 import { Alert, Platform, View, StyleSheet, useWindowDimensions } from "react-native";
 import { StatusBar } from "expo-status-bar";
-import { useFonts } from "expo-font";
 import * as SplashScreen from "expo-splash-screen";
 import {
   NavigationContainer,
@@ -35,9 +34,10 @@ import ErrorBoundary from "./src/components/ErrorBoundary";
 import UndoToast from "./src/components/UndoToast";
 import WebDialogs, { installWebDialogs } from "./src/components/WebDialogs";
 import DesktopApp from "./src/desktop/DesktopApp";
+import { formPage } from "./src/utils/webPages";
 import {
   DESKTOP_WIDTH,
-  FORM_WIDTH,
+  FONT_FAMILY,
   PAGE_WIDTH,
   ROOMS,
   TYPE,
@@ -46,17 +46,13 @@ import {
 
 installWebDialogs();
 
-// Kept up until the fonts are in, so the app never opens on a blank frame.
+// Kept up until the first frame is drawn, so the app never opens on a blank one.
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
 const Stack = createStackNavigator();
 const Tab = createBottomTabNavigator();
 
-// Pages of things to read or fill in stay a readable width in a browser window.
-const FORM_PAGE =
-  Platform.OS === "web"
-    ? { cardStyle: { width: "100%", maxWidth: FORM_WIDTH, alignSelf: "center" } }
-    : {};
+const FORM_PAGE = formPage();
 
 // Every tab is its own stack with the same pushed screens on top of its main one.
 function TabStack({ mainName, mainComponent, mainParams }) {
@@ -203,6 +199,7 @@ function RootNavigation() {
           },
           tabBarLabelStyle: {
             ...TYPE.tab,
+            fontFamily: FONT_FAMILY,
             marginTop: 4,
           },
           tabBarIcon: ({ color, focused }) => (
@@ -249,20 +246,12 @@ function RootNavigation() {
   );
 }
 
+// MiSans needs no loading: it's built into the Android app (app.json) and is a
+// stylesheet's in the browser (src/desktop/fonts.css).
 export default function App() {
-  const [fontsLoaded, fontError] = useFonts({
-    "GeistMono-Bold": require("./assets/fonts/GeistMono-Bold.ttf"),
-    "GeistMono-Medium": require("./assets/fonts/GeistMono-Medium.ttf"),
-  });
-  const ready = fontsLoaded || !!fontError;
   useEffect(() => {
-    if (ready) {
-      SplashScreen.hideAsync().catch(() => {});
-    }
-  }, [ready]);
-  if (!ready) {
-    return null;
-  }
+    SplashScreen.hideAsync().catch(() => {});
+  }, []);
   return (
     <ErrorBoundary>
       <SafeAreaProvider>

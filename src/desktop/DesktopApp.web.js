@@ -1,3 +1,4 @@
+import "./fonts.css";
 import "./desktop.css";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -13,7 +14,7 @@ import RoomScreen from "../screens/RoomScreen";
 import SettingsScreen from "../screens/SettingsScreen";
 import ShoppingScreen from "../screens/ShoppingScreen";
 import UndoToast from "../components/UndoToast";
-import { Wordmark } from "../components/ui";
+import { Logo } from "../components/ui";
 import { ROOMS } from "../utils/constants";
 import { Icon } from "./parts";
 import QuickAdd from "./QuickAdd";
@@ -104,7 +105,11 @@ export default function DesktopApp() {
     [navigation, show]
   );
   const addWithDetails = useCallback((params) => show(["AddItem", params]), [show]);
-  const roomRoute = useMemo(() => ({ params: { room: room?.key } }), [room?.key]);
+  // The box at the top adds things here, so the room's page needs no + of its own.
+  const roomRoute = useMemo(
+    () => ({ params: { room: room?.key, quickAdd: true } }),
+    [room?.key]
+  );
 
   const panelOpen = !!panel.top;
   useEffect(() => {
@@ -153,7 +158,7 @@ export default function DesktopApp() {
       style={themeVars(colors, isDark)}
     >
       <header className="dk-top">
-        <Wordmark size={19} />
+        <Logo size={30} />
         <nav className="dk-tabs" aria-label="Pages">
           {ROOMS.map((r) => (
             <button
