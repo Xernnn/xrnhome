@@ -61,6 +61,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 MAX_BODY = 8 * 1024 * 1024
 MAX_PHOTO = 15 * 1024 * 1024
+# How many lists and objects deep a snapshot may go. The app's own nest a handful; json.dump gives
+# up near a thousand (the recursion limit), while json.loads takes thousands, more on Python 3.14.
+MAX_DEPTH = 64
 # One user's photos, all told. Each copy of the items is capped (MAX_BODY, and only so many are
 # kept), but photos weren't: a client could fill the disk every other service on the phone shares.
 MAX_PHOTOS = 5000
@@ -376,6 +379,20 @@ def read_state(user):
     return kept or {"version": 0, "data": {}}
 
 
+def nested_within(value, limit):
+    """Whether no list or object in [value] sits more than [limit] deep, the outermost being 1.
+    Walked with a list of its own, not by recursion, so any depth is measured without a stack."""
+    todo = [(value, 1)] if isinstance(value, (dict, list)) else []
+    while todo:
+        value, depth = todo.pop()
+        if depth > limit:
+            return False
+        for v in value.values() if isinstance(value, dict) else value:
+            if isinstance(v, (dict, list)):
+                todo.append((v, depth + 1))
+    return True
+
+
 def write_json(path, doc):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"
@@ -671,8 +688,12 @@ class Handler(BaseHTTPRequestHandler):
             data = json.loads(raw)
             if not isinstance(data, dict) or not isinstance(data.get("items"), list):
                 raise ValueError
-        except ValueError:
+        except (ValueError, RecursionError):  # nested past the parser's depth: no traceback, a 400
             return self.send(400, 'body must be {"items": [...]}')
+        if not nested_within(data, MAX_DEPTH):
+            # Parsed, but past what json.dump can write back: it raised RecursionError after the
+            # copy before was filed, and the device got no answer. Refused before anything is written.
+            return self.send(400, f"body nested deeper than {MAX_DEPTH} levels")
         want = (self.headers.get("If-Match") or "").strip()
         if not want:
             return self.send(428, "If-Match required")

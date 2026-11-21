@@ -246,6 +246,31 @@ class SyncServerTest(unittest.TestCase):
         self.assertEqual(400, self.call("PUT", "/state", {"items": 3}, {"If-Match": '"0"'})[0])
         self.assertEqual(413, self.call("PUT", "/state", b"", {"If-Match": '"0"'}, raw=True)[0])
 
+    def test_a_snapshot_too_deep_to_write_back_is_refused_before_anything_is_written(self):
+        # json.loads takes a few thousand levels (tens of thousands on Python 3.14), json.dump only
+        # about a thousand. A snapshot in between was taken, the copy it replaced was filed as an
+        # earlier one, and then writing it raised RecursionError: the connection closed with no
+        # answer, after a write that never happened.
+        self.call("PUT", "/state", snapshot("Milk"), {"If-Match": '"0"'})
+        deep = b'{"items":[{"id":"0","tags":' + b"[" * 2000 + b"]" * 2000 + b"}]}"
+        status, body, _ = self.call("PUT", "/state", deep, {"If-Match": '"1"'}, raw=True)
+        self.assertEqual((400, True), (status, b"nested" in body))
+        # Past what even json.loads takes, on either version: its RecursionError is no ValueError.
+        deeper = b'{"items":' + b"[" * 100_000 + b"]" * 100_000 + b"}"
+        self.assertEqual(400, self.call("PUT", "/state", deeper, {"If-Match": '"1"'}, raw=True)[0])
+        status, body, headers = self.call("GET", "/state")
+        self.assertEqual(('"1"', ["Milk"]), (headers["ETag"], [i["name"] for i in json.loads(body)["items"]]))
+        folder = os.path.join(self.data, "users", "alex")
+        self.assertEqual(["state.json"], os.listdir(folder))  # no earlier copy filed, no state.json.tmp
+
+    def test_a_snapshot_nested_up_to_the_limit_is_taken(self):
+        def nested(depth):  # {"items": [{"tags": [[...]]}]}: the object holding items is level 1
+            return b'{"items":[{"id":"0","tags":' + b"[" * (depth - 3) + b"]" * (depth - 3) + b"}]}"
+        status, _, headers = self.call("PUT", "/state", nested(srv.MAX_DEPTH), {"If-Match": '"0"'}, raw=True)
+        self.assertEqual((200, '"1"'), (status, headers["ETag"]))
+        status, _, _ = self.call("PUT", "/state", nested(srv.MAX_DEPTH + 1), {"If-Match": '"1"'}, raw=True)
+        self.assertEqual(400, status)
+
     def test_photos_go_up_and_come_back(self):
         self.assertEqual((200, []), (lambda r: (r[0], json.loads(r[1])))(self.call("GET", "/photos")))
         jpeg = b"\xff\xd8\xff" + os.urandom(5000)
