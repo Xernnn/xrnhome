@@ -38,6 +38,12 @@ describe("the logo", () => {
     expect(svg).toContain(`fill="${adaptiveIcon.backgroundColor}"`);
   });
 
+  it("tints notifications with that colour too", () => {
+    const { expo } = require(path.join(root, "app.json"));
+    const notifications = expo.plugins.find((plugin) => plugin[0] === "expo-notifications")[1];
+    expect(notifications.color).toBe(expo.android.adaptiveIcon.backgroundColor);
+  });
+
   it("replaces the old wordmark everywhere", () => {
     const files = ["src/components/ui.js", "src/screens/SettingsScreen.js", "src/desktop/DesktopApp.web.js"];
     for (const file of files) {

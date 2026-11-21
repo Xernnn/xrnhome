@@ -2,7 +2,7 @@
   "expo": {
     "name": "xrnhome",
     "slug": "xrnhome",
-    "version": "1.3.0",
+    "version": "1.3.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -28,12 +28,12 @@
         "android.permission.REQUEST_INSTALL_PACKAGES"
       ],
       "package": "com.xern.xrnhome",
-      "versionCode": 11,
+      "versionCode": 12,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundImage": "./assets/adaptive-icon-background.png",
         "monochromeImage": "./assets/adaptive-icon-monochrome.png",
-        "backgroundColor": "#B8860B"
+        "backgroundColor": "#6C6104"
       },
       "blockedPermissions": [
         "android.permission.SYSTEM_ALERT_WINDOW",
@@ -110,7 +110,7 @@
         "expo-notifications",
         {
           "icon": "./assets/adaptive-icon-monochrome.png",
-          "color": "#B8860B"
+          "color": "#6C6104"
         }
       ]
     ]
