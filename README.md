@@ -12,38 +12,49 @@ Everything lives on your phone. There is no account and no cloud. If you run
 a small server at home, the app can keep a copy of your items and photos there
 and update itself from it. Your data goes nowhere else.
 
-| Food | Household | Shopping | Dark mode |
+| Food, by category | Household, two on the list | Shopping, one in the cart | Dark mode |
 | :--: | :--: | :--: | :--: |
-| ![Food](docs/screenshots/food-light.png) | ![Household](docs/screenshots/household-light.png) | ![Shopping](docs/screenshots/shopping-light.png) | ![Dark mode](docs/screenshots/food-dark.png) |
+| ![The Food tab: cards three to a row on panels in each category's colour, with a banner for what's expiring](docs/screenshots/food-light.png) | ![The Household tab, with a green cart on the two items that are on the shopping list](docs/screenshots/household-light.png) | ![The Shopping tab: three to buy and one ticked off into the cart](docs/screenshots/shopping-light.png) | ![The Food tab in the dark theme](docs/screenshots/food-dark.png) |
 
-| An item | Editing an item | Settings |
-| :--: | :--: | :--: |
-| ![An item](docs/screenshots/detail-light.png) | ![Editing an item](docs/screenshots/edit-light.png) | ![Settings](docs/screenshots/settings-light.png) |
+| An item | Editing it | When it goes on the list | Settings |
+| :--: | :--: | :--: | :--: |
+| ![An item's page: its expiry date, two bottles with the open one at 60%, its shopping-list rule, a note and its history](docs/screenshots/detail-light.png) | ![The top of the item form: photo, name, type and category, count and unit](docs/screenshots/edit-light.png) | ![The rest of the item form: the open one's %, the expiry date, and "when it's running low" set to 1 left or 20%](docs/screenshots/edit-shopping-light.png) | ![Settings: theme, sync, your categories](docs/screenshots/settings-light.png) |
+
+The screenshots are made-up items in the laptop version at phone size. On a
+phone, Settings also has Check for updates, Expiry reminders, and Export and
+Import data.
 
 ## Features
 
-- **Track what you have** — every item gets a name, and if you like a photo, a
-  category, a count and a note. Counts can be typed as well as tapped, and units
-  run from packs and bottles to kg and ml.
+- **Track what you have** — every item gets a name, and if you like a photo
+  (from the camera or your photos), a category, a count and a note. Counts can
+  be typed as well as tapped, and units run from packs and bottles to kg and ml.
 - **Food and Household** — each type has its own tab and its own categories.
   Food is anything you eat or drink: cereal, noodles, drinks, spices and sauces,
   and what's in the fridge or the cupboard. Household is the physical things you
   own, sorted by where they live: kitchen, bedroom or storage. Add your own
-  categories when those aren't enough.
+  categories in Settings → Your categories when those aren't enough; removing
+  one moves its items to Other.
+- **No doubles** — adding something you already have, by the same name in the
+  same category, adds to that item instead of making a second card. Renaming an
+  item into one you have offers to merge the two.
 - **Count part-used items** — for things like a bottle of oil, track how much of
   the open one is left instead of pretending it is full or empty.
 - **Expiry dates** — give an item an optional expiry date. Anything expired or
   due within four days is flagged on its card and counted in a banner at the top
-  of its tab, and a notification tells you four days ahead and on the day. When
-  you buy more of something that had a date, the app asks for the new one.
+  of its tab, whose **Show** narrows the tab to just those. With Expiry reminders
+  on in Settings, a notification at 9 in the morning tells you four days ahead
+  and on the day. When you buy more of something that had a date, the app asks
+  for the new one.
 - **Shopping list** — type anything you need into the box on the Shopping tab,
   or flag items you always re-buy so they land under "To buy" when they run
   low, whichever tab they belong to. You choose what "low" means for each item:
   down to so many left, the open one down to some %, or either one. Stock that
   has expired counts as needing replacing too. The list is grouped by category
-  and can be shared. In the shop, tick things off as you go: ticked items stay in
-  "In the cart", even if the app is closed, where you can set how many you bought
-  or untick a mistake.
+  and can be shared as text. In the shop, tick things off as you go: each tick
+  counts as one bought, and ticked items stay in "In the cart", where you can set
+  how many you bought or untick a mistake. The cart survives the app being
+  closed, until you press Done or a day after you last touched it.
 - **Nothing gets lost** — things you finish that aren't on the list wait under
   "Ran out", one tap from going back on it. Deleting, finishing a unit and taking
   something off the list all show an undo button for a few seconds, and a form
@@ -57,22 +68,23 @@ and update itself from it. Your data goes nowhere else.
   look as the other xrn apps. Follows your system theme, or pick one in
   Settings.
 - **Your own home server** — connect the app to the small server in
-  [`server/`](server) and it keeps a copy of every item and photo there, sent a
-  few seconds after each change. A new phone, or the same phone after a
-  reinstall, restores everything from it. The server also hands out new builds
-  of the app: they download on Wi-Fi, and install after asking.
+  [`server/`](server) and it keeps a copy of every item and photo there, sent
+  15 seconds after the last change, or straight away when you leave the app. A
+  new phone, or the same phone after a reinstall, restores everything from it.
+  The server also hands out new builds of the app: they download on Wi-Fi, and
+  install after asking.
 - **The same app on your laptop** — the server also serves the app as a web page,
   laid out for a big screen: the same cards in a wider grid, the shopping list
   always beside them, and a box to add things by typing a name and pressing Enter.
   Open it in a browser and sign in, and it stays in step with the phone: changes on
-  either side show up on the other while the app is open, and the two are merged
-  rather than one replacing the other.
+  either side show up on the other within about half a minute while the app is
+  open, and the two are merged rather than one replacing the other.
 - **Backup and restore** — export everything to a JSON file from Settings, and
   import it again on the same phone or a new one. Backup files don't include
   photos. The home server does.
-- **Photos that stick** — pictures are shrunk to a sensible size and copied into
-  the app's own storage, so they survive the system clearing its photo picker
-  cache.
+- **Photos that stick** — pictures are shrunk to 1280 pixels on the long side and
+  copied into the app's own storage, so they survive the system clearing its
+  photo picker cache.
 - **Careful with your data** — if the saved list is ever damaged, the app recovers
   what it can and keeps the damaged copy instead of starting empty. It won't send
   an empty or recovered list over the home server's copy without asking, and a
@@ -96,13 +108,19 @@ Scan the QR code with Expo Go, or press `a` / `i` in the terminal to open an
 Android or iOS simulator. There are no custom native modules, so Expo Go is
 enough for day-to-day development. Expo Go draws the text in the phone's own
 font: MiSans is built into the app (`app.json`), so it shows in a real build.
+Pressing `w` (or `npm run web`) opens the app in a browser, which is handy for
+layout work, but only the copy the home server serves syncs.
 
 The rules behind the app (counting, the shopping list, merging, recovery, the
-sync's safety checks and the colour contrast) have tests:
+sync's safety checks, the category grid's layout, the release checks, the font
+and the colour contrast) have tests:
 
 ```bash
 npm test
 ```
+
+GitHub Actions runs these and the server's tests on every push to `master` and
+every pull request.
 
 Your computer and phone need to be on the same network. If the QR code will not
 connect, a tunnel usually gets around it:
@@ -139,10 +157,10 @@ This builds the release APK on your computer and uploads it to the server over
 ssh, with an `app.json` that names it. It only runs on `master` with everything
 committed (`--force` overrides that). It bumps `android.versionCode` in
 `app.json` first if the server already has that build, so bump it in a commit
-beforehand. The app checks every
-few hours, or right away from Settings → Check for updates. It downloads the
-APK, checks its SHA-256 against the one in `app.json`, and opens Android's
-installer. The script reads
+beforehand. The app checks when it opens and every six hours, or right away from
+Settings → Check for updates. On Wi-Fi it downloads a new build by itself; on
+mobile data it waits to be asked. It checks the APK's SHA-256 against the one in
+`app.json`, then asks before opening Android's installer. The script reads
 `~/.config/xrnhome/release.json`:
 
 ```json
@@ -167,10 +185,16 @@ pip install bcrypt
 python3 server/xrnhome-sync.py --data ~/xrnhome-sync/data --users ~/.config/xrn-sync/users
 ```
 
-It listens on `127.0.0.1:5236`. Publish it over HTTPS under `/xrnhome` with a
-reverse proxy such as Tailscale Funnel or Caddy. Then, in the app, go to Settings
-→ Home server and enter `https://<your-host>/xrnhome` with your user name and
-password.
+It listens on `127.0.0.1:5236` (`--host` and `--port` change that). Publish it
+over HTTPS under `/xrnhome` with a reverse proxy such as Tailscale Funnel or
+Caddy; it works whether the proxy strips that prefix or not. Then, in the app,
+go to Settings → Home server and enter `https://<your-host>/xrnhome` with your
+user name and password. The app only takes an `https://` address.
+
+A wrong password is answered after two seconds, and ten different wrong logins
+from one address within 15 minutes shut that address out until they age out.
+The same wrong password sent again, by a device still holding an old one, counts
+once. `GET /health` answers `ok` without a login, for monitoring.
 
 Each device sends all of its items after a change, and the server only accepts a
 write made on top of the copy that device last saw. A device that finds the
@@ -275,16 +299,20 @@ src/
                         the page for unreadable data
   components/           the shared building blocks (ui.js), Text in the app's
                         font (Text.js), the item form, item cards, category
-                        grid, stepper, toast, badges
+                        grid, stepper, search bar, toast, expiry pill, and
+                        the browser's stand-in for the phone's dialogs
   desktop/              the page the laptop version puts round the app's
-                        screens, and the font's stylesheet
+                        screens (DesktopApp.web.js), the box that adds things
+                        (QuickAdd.js), and its stylesheets
   context/              inventory state, theme, reminders, home server sync
                         and updates
-  utils/                the inventory rules (inventoryLogic.js), types,
-                        categories, units, expiry, restock rules, styling
-                        tokens, storage, backups, photos, reminders, haptics,
-                        home server requests, sync and updates
+  utils/                the inventory rules (inventoryLogic.js), the category
+                        grid's layout (blobLayout.js), types, categories,
+                        units, expiry, restock rules, styling tokens, storage,
+                        backups, photos, reminders, haptics, home server
+                        requests, sync and updates
 test/                   tests for the rules above
+.github/workflows/      CI: the app's tests and the server's
 assets/                 the tile (icon.svg, icon-16.svg for the smallest sizes),
                         the app icons, splash image and logo drawn from it, and
                         MiSans for Android
@@ -296,10 +324,11 @@ scripts/release.mjs     builds the APK or the laptop version and publishes it to
 
 ## Built with
 
-React Native, [Expo](https://expo.dev/) (SDK 54),
-[React Navigation](https://reactnavigation.org/) and
+React Native 0.81, [Expo](https://expo.dev/) (SDK 54),
+[React Navigation](https://reactnavigation.org/),
 [AsyncStorage](https://react-native-async-storage.github.io/async-storage/) for
-local persistence. All text, numbers included, is set in
+local persistence, and react-native-web for the laptop version. The server is
+Python's standard library plus `bcrypt`. All text, numbers included, is set in
 [MiSans](https://hyperos.mi.com/font) by Xiaomi, free for commercial use and
 embedded under its terms, which ask for the credit kept in Settings → About.
 The files are the official MiSans Latin ones, unchanged; its Bold and Heavy
