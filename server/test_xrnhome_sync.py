@@ -3,6 +3,7 @@
     python3 -m unittest server/test_xrnhome_sync.py     (from the repo root; needs bcrypt)
 """
 import base64
+import hashlib
 import http.client
 import importlib.util
 import io
@@ -648,6 +649,176 @@ class SyncServerTest(unittest.TestCase):
         self.assertEqual(["waiting.jpg"], os.listdir(folder))
         self.call("PUT", "/state", snapshot("Milk", photo="waiting.jpg"), {"If-Match": '"1"'})
         self.assertEqual(200, self.call("GET", "/photos/waiting.jpg")[0])
+
+    # ---- device logins (DeviceTokens) ---------------------------------------------------------
+
+    def tokens_path(self):
+        return os.path.join(os.path.dirname(srv.args.users), "device-tokens.json")
+
+    def write_tokens(self, entries):
+        """device-tokens.json as the server's owner writes it: a new file in the old one's place."""
+        with open(self.tokens_path() + ".test", "w", encoding="utf-8") as f:
+            f.write(entries if isinstance(entries, str) else json.dumps({"tokens": entries}))
+        os.replace(self.tokens_path() + ".test", self.tokens_path())
+
+    @staticmethod
+    def a_token(services=("xrnhome",), user="alex"):
+        """(a device token, its entry in the file)."""
+        token_id = os.urandom(4).hex()
+        secret = base64.urlsafe_b64encode(os.urandom(32)).decode().rstrip("=")
+        entry = {"id": token_id, "user": user, "device": f"device {token_id}", "services": list(services),
+                 "sha256": hashlib.sha256(secret.encode()).hexdigest(), "created": 1764115200}
+        return f"xrndev_{token_id}_{secret}", entry
+
+    def device_call(self, auth, addr, method="GET", path="/state", body=b"", **headers):
+        """(status, body, headers) of a request sent with Authorization: [auth], from [addr]."""
+        conn = http.client.HTTPConnection("127.0.0.1", self.httpd.server_address[1], timeout=10)
+        conn.request(method, path, body=body, headers={"Authorization": auth, "X-Forwarded-For": addr, **headers})
+        res = conn.getresponse()
+        answer = res.status, res.read(), res
+        conn.close()
+        return answer
+
+    def bearer(self, token, addr, **kw):
+        return self.device_call(f"Bearer {token}", addr, **kw)[0]
+
+    def with_password(self, addr, **kw):
+        return self.device_call("Basic " + base64.b64encode(b"alex:secret").decode(), addr, **kw)[0]
+
+    def test_a_device_token_signs_in_as_its_user(self):
+        token, entry = self.a_token()
+        self.write_tokens([entry])
+        status, body, _ = self.device_call(f"Bearer {token}", "198.18.7.1", path="/xrnhome/state")
+        self.assertEqual(200, status)
+        self.assertEqual(self.device_call("Basic " + base64.b64encode(b"alex:secret").decode(), "198.18.7.1")[1], body, "alex's, as the password reads them")
+
+    def test_a_token_for_other_services_is_refused_and_guessed_nothing(self):
+        token, entry = self.a_token(services=("xrnrule", "xrnnote"))
+        self.write_tokens([entry])
+        addr = "198.18.7.2"
+        for _ in range(srv.FAIL_LIMIT + 2):
+            status, body, res = self.device_call(f"Bearer {token}", addr)
+            self.assertEqual(403, status)
+            self.assertIn(b"xrnhome", body)
+            self.assertIsNone(res.getheader("WWW-Authenticate"))
+        self.assertEqual(200, self.with_password(addr), "not locked out: it guessed nothing")
+
+    def test_a_wrong_token_is_a_wrong_login(self):
+        token, entry = self.a_token()
+        self.write_tokens([entry])
+        addr = "198.18.7.3"
+        wrong = [f"{token[:16]}{self.a_token()[0][16:]}",  # its id, another secret
+                 "xrnhub_" + token[7:],  # another kind of token
+                 "not-a-token"]
+        wrong += [self.a_token()[0] for _ in range(srv.FAIL_LIMIT)]  # ids that aren't there
+        for guess in wrong[:srv.FAIL_LIMIT]:  # each a new one, not one wrong login sent again
+            self.assertEqual(401, self.bearer(guess, addr))
+        self.assertEqual(429, self.bearer(token, addr), "locked out, the right token too, as with a password")
+        self.assertEqual(200, self.bearer(token, "198.18.7.4"))
+
+    def test_a_revoked_token_sent_again_and_again_counts_once(self):
+        # As a password from before it was changed: a device that hasn't heard of the revoke goes
+        # on sending the same token, which mustn't lock the household's address out.
+        token, entry = self.a_token()
+        self.write_tokens([])
+        addr = "198.18.7.13"
+        for _ in range(srv.FAIL_LIMIT + 3):
+            self.assertEqual(401, self.bearer(token, addr))
+        self.assertEqual(200, self.with_password(addr))
+
+    def test_a_revoked_token_is_refused_from_its_next_request(self):
+        token, entry = self.a_token()
+        other, kept = self.a_token()
+        self.write_tokens([entry, kept])
+        self.assertEqual(200, self.bearer(token, "198.18.7.5"))
+        self.write_tokens([kept])  # revoked, and nothing restarted
+        self.assertEqual(401, self.bearer(token, "198.18.7.5"))
+        self.assertEqual(200, self.bearer(other, "198.18.7.5"))
+
+    def test_a_tokens_user_must_be_in_the_users_file(self):
+        import bcrypt
+
+        token, entry = self.a_token(user="sam")
+        self.write_tokens([entry])
+        self.assertEqual(401, self.bearer(token, "198.18.7.6"), "no sam in the users file")
+        with open(srv.args.users, encoding="utf-8") as f:
+            before = f.read()
+        try:
+            with open(srv.args.users, "a", encoding="utf-8") as f:
+                f.write("sam:" + bcrypt.hashpw(b"other", bcrypt.gensalt(4)).decode() + "\n")
+            self.assertEqual(200, self.bearer(token, "198.18.7.6"))
+        finally:
+            with open(srv.args.users + ".test", "w", encoding="utf-8") as f:
+                f.write(before)
+            os.replace(srv.args.users + ".test", srv.args.users)
+        self.assertEqual(401, self.bearer(token, "198.18.7.6"), "taken out of it, sam's tokens end")
+
+    def test_a_tokens_file_that_cant_be_read_lets_no_token_in_and_the_password_still_works(self):
+        token, entry = self.a_token()
+        addr = "198.18.7.7"
+        broken = ("{not json", '{"tokens": {}}', "[1]")
+        with unittest.mock.patch("sys.stderr", new_callable=io.StringIO) as log:
+            for doc in broken:
+                self.write_tokens(doc)
+                self.assertEqual(401, self.bearer(token, addr))
+                self.assertEqual(401, self.bearer(token, addr))
+                self.assertEqual(200, self.with_password(addr))
+        self.assertEqual(len(broken), log.getvalue().count("can't be read, so no device token signs in"),
+                         "a line for each, not for each request")
+        self.write_tokens([entry])
+        self.assertEqual(200, self.bearer(token, "198.18.7.8"))
+        os.remove(self.tokens_path())
+        self.assertEqual(401, self.bearer(token, "198.18.7.8"), "no file, no tokens")
+
+    def test_an_entry_not_as_it_should_be_signs_no_one_in(self):
+        token, entry = self.a_token()
+        for bad in (dict(entry, sha256="\u00e9" * 64), dict(entry, sha256=entry["sha256"].upper()),
+                    dict(entry, user="../alex"), dict(entry, user=["alex"]), dict(entry, services="xrnhome"),
+                    {k: v for k, v in entry.items() if k != "services"}):
+            self.write_tokens([bad, "not an entry"])
+            self.assertEqual(401, self.bearer(token, "198.18.7.9"), bad)
+
+    def test_when_a_device_was_last_here_is_written_down_now_and_then(self):
+        token, entry = self.a_token()
+        gone, revoked = self.a_token()
+        self.write_tokens([entry, revoked])
+        seen = os.path.join(os.path.dirname(srv.args.users), "device-seen", "xrnhome.json")
+
+        def written():
+            st = os.stat(seen)
+            with open(seen, encoding="utf-8") as f:
+                return (st.st_ino, st.st_mtime_ns), json.load(f), st.st_mode & 0o777
+
+        start = int(time.time())
+        self.assertEqual(200, self.bearer(gone, "198.18.7.11"))
+        self.assertEqual(200, self.bearer(token, "198.18.7.11"))
+        stamp, doc, mode = written()
+        self.assertGreaterEqual(doc[entry["id"]], start)
+        self.assertIn(revoked["id"], doc)
+        self.assertEqual(0o600, mode)
+        for _ in range(3):
+            self.assertEqual(200, self.bearer(token, "198.18.7.11"))
+        self.assertEqual(stamp, written()[0], "not written again within DEVICE_SEEN_S")
+        self.write_tokens([entry])
+        with unittest.mock.patch.object(srv, "DEVICE_SEEN_S", 0):
+            self.assertEqual(200, self.bearer(token, "198.18.7.11"))
+        stamp2, doc, _ = written()
+        self.assertNotEqual(stamp, stamp2)
+        self.assertEqual([entry["id"]], list(doc), "a revoked token's time goes with it")
+        with open(seen, encoding="utf-8") as f:
+            self.assertNotIn(token[16:], f.read())
+
+    def test_a_token_never_reaches_the_log(self):
+        token, entry = self.a_token()
+        self.write_tokens([entry])
+        wrong = self.a_token()[0]
+        with unittest.mock.patch("sys.stderr", new_callable=io.StringIO) as log:
+            self.assertEqual(200, self.bearer(token, "198.18.7.12"))
+            self.assertEqual(401, self.bearer(wrong, "198.18.7.12"))
+            time.sleep(0.05)
+        self.assertIn("/state", log.getvalue())
+        for secret in (token[16:], wrong[16:]):
+            self.assertNotIn(secret, log.getvalue())
 
 
 if __name__ == "__main__":

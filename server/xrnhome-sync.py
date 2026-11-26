@@ -33,6 +33,11 @@ sync password.
                               with the app's own requests, and nothing has to store a password
     HEAD                      any GET above, answered without its body
 
+A device may sign in with a device token instead of the password, `Authorization: Bearer
+xrndev_...`: a login of its own for one device and the services it names, which the server's
+owner makes and revokes in device-tokens.json beside the users file (see DeviceTokens). A token
+for other services only is answered 403.
+
 Every write keeps the copy it replaces: the last KEEP_VERSIONS of them in history/, and the
 first of each day in daily/ for KEEP_DAYS. A photo goes once none of those name it any more, and
 it has been here for KEEP_DAYS: the laptop sends a photo as it's picked and the item after, so a
@@ -48,6 +53,7 @@ count what it changed a second time.
 import argparse
 import base64
 import hashlib
+import hmac
 import ipaddress
 import json
 import os
@@ -139,6 +145,7 @@ failures = {}
 checking = {}  # client address -> how many of its logins are being checked right now
 held = threading.BoundedSemaphore(MAX_HELD)
 pruned = {}  # user -> time.monotonic() of the last photo sweep
+devices = None  # DeviceTokens, made on first use: see device_tokens()
 
 
 def users_mtime():
@@ -198,6 +205,147 @@ def check_login(header):
     except (OSError, ValueError):
         pass
     return None
+
+
+# ---- device logins ----------------------------------------------------------------------------
+# The same block is in every xrn sync server that reads the shared users file.
+
+DEVICE_TOKEN = re.compile(r"xrndev_([0-9a-f]{8})_([A-Za-z0-9_-]{43})")
+DEVICE_USER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+DEVICE_HASH = re.compile(r"[0-9a-f]{64}")
+DEVICE_SEEN_S = 600  # when a device was last here is written down at most this often
+DEVICE_SPARE = "0" * 64  # what a token whose id isn't listed is held against, so it takes as long
+
+
+class DeviceTokens:
+    """Device logins: `Authorization: Bearer xrndev_<id>_<secret>`, one per device, each for the
+    services it names. The server's owner makes and revokes them in device-tokens.json, beside the
+    users file, which no server writes:
+
+        {"tokens": [{"id": "<8 hex>", "user": "alex", "device": "laptop",
+                     "services": ["xrnloops", "xrnrule"], "sha256": "<SHA-256 of the secret, hex>",
+                     "created": <unix seconds>}]}
+
+    Only the secret's SHA-256 is kept, so a copy of the file signs no one in; the secret is 32
+    random bytes, which no guessing reaches, so no bcrypt is paid per request. The file is read
+    again whenever it (or the users file) changes, so a revoked token is refused from its next
+    request on. One that can't be read lets no token in; the password still works. A token signs
+    in as its user only while the users file lists them, and only to the services it names. When
+    each was last used here goes to device-seen/<service>.json beside it, at most every
+    DEVICE_SEEN_S, never on every request."""
+
+    def __init__(self, users_path, service):
+        folder = os.path.dirname(os.path.abspath(users_path))
+        self.path = os.path.join(folder, "device-tokens.json")
+        self.seen_path = os.path.join(folder, "device-seen", f"{service}.json")
+        self.users_path = users_path
+        self.service = service
+        self.lock = threading.Lock()
+        self.stamps = None  # the two files' (inode, mtime, size) [tokens] was read from
+        self.tokens = {}  # id -> entry, of users the users file lists
+        self.seen = None  # id -> unix seconds, as device-seen/<service>.json has them
+
+    @staticmethod
+    def stamp(path):
+        try:
+            st = os.stat(path)
+            return st.st_ino, st.st_mtime_ns, st.st_size
+        except FileNotFoundError:
+            return None
+        except OSError as e:
+            return "unreadable", e.errno
+
+    def current(self):
+        """The tokens as the files say now, read again only when one of them has changed."""
+        stamps = (self.stamp(self.path), self.stamp(self.users_path))
+        with self.lock:
+            if stamps == self.stamps:
+                return self.tokens
+        tokens = {}
+        if stamps[0] is not None:
+            try:
+                with open(self.path, encoding="utf-8") as f:
+                    doc = json.load(f)
+                listed = doc.get("tokens") if isinstance(doc, dict) else None
+                if not isinstance(listed, list):
+                    raise ValueError("not a list of tokens")
+                users = set()
+                with open(self.users_path, encoding="utf-8") as f:
+                    for line in f:
+                        name, _, hashed = line.strip().partition(":")
+                        if hashed:
+                            users.add(name)
+                for t in listed:
+                    if not isinstance(t, dict):
+                        continue
+                    token_id, user, services, digest = t.get("id"), t.get("user"), t.get("services"), t.get("sha256")
+                    if (isinstance(token_id, str) and isinstance(digest, str) and DEVICE_HASH.fullmatch(digest)
+                            and isinstance(user, str) and DEVICE_USER.fullmatch(user) and user in users
+                            and isinstance(services, list)):
+                        tokens[token_id] = {"user": user, "sha256": digest,
+                                            "services": {s for s in services if isinstance(s, str)}}
+            except (OSError, ValueError, RecursionError) as e:  # ValueError: also bad UTF-8
+                sys.stderr.write(f"{self.path} can't be read, so no device token signs in: {e}\n")
+                tokens = {}
+        with self.lock:
+            self.stamps, self.tokens = stamps, tokens
+        return tokens
+
+    def check(self, header):
+        """(user, False) for a device token that signs in here; (None, True) for a right one that
+        is for other services only; (None, False) for anything else: no device token, or a wrong
+        or revoked one."""
+        if not header or not header.startswith("Bearer "):
+            return None, False
+        m = DEVICE_TOKEN.fullmatch(header[7:].strip())
+        if not m:
+            return None, False
+        token_id, secret = m.groups()
+        entry = self.current().get(token_id)
+        right = hmac.compare_digest(hashlib.sha256(secret.encode()).hexdigest(),
+                                    entry["sha256"] if entry else DEVICE_SPARE)
+        if not (entry and right):
+            return None, False
+        if self.service not in entry["services"]:
+            return None, True
+        self.note(token_id)
+        return entry["user"], False
+
+    def note(self, token_id):
+        """Writes down that [token_id] was here now, if it last was DEVICE_SEEN_S ago or more."""
+        now = int(time.time())
+        with self.lock:
+            if self.seen is None:
+                try:
+                    with open(self.seen_path, encoding="utf-8") as f:
+                        doc = json.load(f)
+                    self.seen = {k: v for k, v in doc.items() if isinstance(v, int)} if isinstance(doc, dict) else {}
+                except (OSError, ValueError, RecursionError):
+                    self.seen = {}
+            if now - self.seen.get(token_id, 0) < DEVICE_SEEN_S:
+                return
+            # Revoked ones go; the file holds no more than the tokens there are.
+            self.seen = {k: v for k, v in self.seen.items() if k in self.tokens}
+            self.seen[token_id] = now
+            try:
+                os.makedirs(os.path.dirname(self.seen_path), mode=0o700, exist_ok=True)
+                tmp = f"{self.seen_path}.{os.getpid()}.tmp"
+                fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(self.seen, f, separators=(",", ":"))
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp, self.seen_path)
+            except OSError as e:  # the login counts all the same
+                sys.stderr.write(f"{self.seen_path} not written: {e}\n")
+
+
+def device_tokens():
+    """The device logins beside the users file in use."""
+    global devices
+    if devices is None or devices.users_path != args.users:
+        devices = DeviceTokens(args.users, "xrnhome")
+    return devices
 
 
 def client_address(handler):
@@ -593,18 +741,26 @@ class Handler(BaseHTTPRequestHandler):
             self.send(429, "too many wrong passwords; try again later",
                       headers={"Retry-After": str(FAIL_WINDOW_S)})
             return None
-        user, right = None, None
+        user, right, elsewhere = None, None, False
         if header:
             try:
                 # A login already found right is a device syncing, not someone signing in, and
                 # settles nothing: one sending its password with every request cleared the count
                 # for its whole address, so a guesser behind the same one never ran out of guesses.
+                # Nor does a device token, which is never a password; a wrong one counts as one does.
                 user = cached_login(header)
                 if not user:
                     user = check_login(header)
                     right = bool(user)
+                if not user:
+                    user, elsewhere = device_tokens().check(header)
+                    right = None if user or elsewhere else False
             finally:
                 settle_guess(addr, header, right)
+        if elsewhere:
+            # Its secret was right, so it guessed nothing; a 401 would say the token is wrong.
+            self.send(403, "this device's login doesn't reach xrnhome")
+            return None
         if not user:
             # A request with no password guessed nothing, and needn't hold a thread for it.
             if header:

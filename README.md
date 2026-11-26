@@ -178,7 +178,9 @@ published.
 [`server/xrnhome-sync.py`](server/xrnhome-sync.py) is a single Python file with
 no dependencies besides `bcrypt`. It stores one copy of your items per user,
 plus their photos, and checks logins against an htpasswd file with bcrypt hashes
-(Radicale's works as it is). Use Python 3.14.7 or newer: older versions answer a malformed request with no HTTP status line, which the server tests check for.
+(Radicale's works as it is). A device can sign in with a device token of its own instead
+(`Authorization: Bearer xrndev_…`): one login per device, for the services it uses, kept as a
+SHA-256 in `device-tokens.json` beside the users file and revoked on its own. Use Python 3.14.7 or newer: older versions answer a malformed request with no HTTP status line, which the server tests check for.
 
 ```bash
 pip install bcrypt
