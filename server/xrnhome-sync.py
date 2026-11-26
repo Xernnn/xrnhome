@@ -138,6 +138,7 @@ args = None
 lock = threading.Lock()  # state.json, history/ and daily/
 photo_lock = threading.Lock()
 auth_cache = {}  # sha256(user:password) -> (user, expires, users-file mtime)
+refused = {}  # sha256(user:password) -> (expires, users-file mtime) of a login found wrong: see check_login
 fail_lock = threading.Lock()
 fail_settled = threading.Condition(fail_lock)  # a login being checked has been settled
 # client address -> {sha256 of a wrong Authorization: (monotonic time it last came, user name it tried)}
@@ -185,6 +186,12 @@ def check_login(header):
     hit = auth_cache.get(key)
     if hit and hit[1] > time.time() and hit[2] == mtime:
         return hit[0]
+    # A login already found wrong is wrong still, until the users file changes. A device sending
+    # the password from before it was changed counts once against the lockout (settle_guess), but
+    # each of its tries ran bcrypt again, a third of a second of the old phone's CPU every time.
+    no = refused.get(key)
+    if no and no[0] > time.time() and no[1] == mtime:
+        return None
     import bcrypt  # only needed once someone logs in
 
     try:
@@ -202,9 +209,24 @@ def check_login(header):
             # A name that isn't there takes as long as a wrong password for one that is, or
             # the time an answer takes says which names exist. The result is never used.
             bcrypt.checkpw(password.encode(), spare.encode())
+        remember_refusal(key, mtime)
     except (OSError, ValueError):
         pass
     return None
+
+
+def remember_refusal(key, mtime):
+    """Notes a login found wrong for the lockout window. Each address gets only FAIL_LIMIT of them
+    checked, but many addresses could still fill memory, so past 10,000 the stale ones go, and if
+    that isn't enough, all of them (they are only a saving)."""
+    now = time.time()
+    if len(refused) > 10000:
+        for k, (expires, _) in list(refused.items()):
+            if expires <= now:
+                refused.pop(k, None)
+        if len(refused) > 10000:
+            refused.clear()
+    refused[key] = (now + FAIL_WINDOW_S, mtime)
 
 
 # ---- device logins ----------------------------------------------------------------------------
@@ -557,9 +579,12 @@ def keep_old(user, cur):
         return
     history = user_dir(user, "history")
     write_json(os.path.join(history, f"{cur['version']}.json"), cur)
-    versions = sorted(int(n[:-5]) for n in os.listdir(history) if re.fullmatch(r"\d+\.json", n))
-    for v in versions[:-KEEP_VERSIONS]:
-        os.remove(os.path.join(history, f"{v}.json"))
+    # The oldest filed go, not the lowest numbers: once state.json is put back from an older copy
+    # the numbers go backwards, and the copy just filed was the lowest, so it went at once.
+    names = [n for n in os.listdir(history) if re.fullmatch(r"\d+\.json", n)]
+    names.sort(key=lambda n: (os.stat(os.path.join(history, n)).st_mtime_ns, int(n[:-5])))
+    for n in names[:-KEEP_VERSIONS]:
+        os.remove(os.path.join(history, n))
 
     daily = user_dir(user, "daily")
     day = datetime.now(timezone.utc).strftime("%Y-%m-%d")

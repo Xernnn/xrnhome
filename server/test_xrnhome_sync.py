@@ -47,6 +47,7 @@ class SyncServerTest(unittest.TestCase):
         srv.failures.clear()
         srv.checking.clear()
         srv.auth_cache.clear()
+        srv.refused.clear()
         srv.pruned.clear()
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), srv.Handler)
         self.httpd.daemon_threads = True
@@ -373,6 +374,24 @@ class SyncServerTest(unittest.TestCase):
         self.assertEqual(1, checks("nobody:nope"))  # none: the answer came sooner, and said so
         self.assertIsNone(srv.check_login("Basic " + base64.b64encode(b"nobody:secret").decode()))
 
+    def test_the_same_wrong_password_again_costs_no_second_check(self):
+        # A device still sending the password from before it was changed counts once against the
+        # lockout, by design, but each of its tries ran bcrypt again, a third of a second of the
+        # old phone's CPU every time.
+        import bcrypt
+
+        users = srv.args.users
+        with unittest.mock.patch.object(bcrypt, "checkpw", wraps=bcrypt.checkpw) as checkpw:
+            answers = [self.call("GET", "/state", password="before-the-change")[0] for _ in range(4)]
+            self.assertEqual(([401] * 4, 1), (answers, checkpw.call_count))
+            self.assertEqual(401, self.call("GET", "/state", password="another guess")[0])
+            self.assertEqual(2, checkpw.call_count)  # a new one is checked
+            # The users file changes, to the password that device has: it's checked again, and right.
+            with open(users, "w") as f:
+                f.write("alex:" + bcrypt.hashpw(b"before-the-change", bcrypt.gensalt(4)).decode() + "\n")
+            os.utime(users, (time.time() + 5, time.time() + 5))
+            self.assertEqual(200, self.call("GET", "/state", password="before-the-change")[0])
+
     def timed(self, addr, password):
         start = time.monotonic()
         status = self.call("GET", "/state", password=password, headers={"X-Forwarded-For": addr})[0]
@@ -557,6 +576,30 @@ class SyncServerTest(unittest.TestCase):
         daily = os.listdir(os.path.join(self.data, "users", "alex", "daily"))
         self.assertEqual(1, len(daily))
         with open(os.path.join(self.data, "users", "alex", "daily", daily[0])) as f:
+            self.assertEqual("item 0", json.load(f)["data"]["items"][0]["name"])
+
+    def test_a_copy_replaced_after_a_rollback_stays_in_the_history(self):
+        # state.json put back from the day's first copy, version 1 (by hand, or by read_state after
+        # damage), while the history held 5 to 24. The copy the next write replaced was filed as
+        # 1.json and, the lowest number, deleted at once; until the version passed 24, every
+        # replaced copy went the same way.
+        v = '"0"'
+        for n in range(srv.KEEP_VERSIONS + 5):
+            v = self.call("PUT", "/state", snapshot(f"item {n}"), {"If-Match": v})[2]["ETag"]
+        folder = os.path.join(self.data, "users", "alex")
+        history = os.path.join(folder, "history")
+        numbers = lambda: sorted(int(n[:-5]) for n in os.listdir(history))  # noqa: E731
+        self.assertEqual(list(range(5, 25)), numbers())
+        daily = os.path.join(folder, "daily")
+        with open(os.path.join(daily, os.listdir(daily)[0]), encoding="utf-8") as f:
+            first = f.read()
+        with open(os.path.join(folder, "state.json"), "w", encoding="utf-8") as f:
+            f.write(first)
+        self.assertEqual(200, self.call("PUT", "/state", snapshot("after the rollback"), {"If-Match": '"1"'})[0])
+        self.assertEqual([1] + list(range(6, 25)), numbers())  # the oldest filed goes instead: 5.json
+        self.assertEqual(200, self.call("PUT", "/state", snapshot("and again"), {"If-Match": '"2"'})[0])
+        self.assertEqual([1, 2] + list(range(7, 25)), numbers())
+        with open(os.path.join(history, "1.json"), encoding="utf-8") as f:
             self.assertEqual("item 0", json.load(f)["data"]["items"][0]["name"])
 
     def test_photos_nothing_names_any_more_are_swept(self):

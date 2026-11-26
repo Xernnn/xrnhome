@@ -235,7 +235,8 @@ It holds the same items under the same rules, with a few differences. Photos are
 chosen from your files and go straight to the server, so adding one needs a
 connection. There's no camera, reminders or backup files, since the server keeps the
 copies. It keeps a list of its own in the browser and merges it with the server's the
-same way the phone does.
+same way the phone does. One tab of it runs at a time, since tabs share that list: a
+second says "Open in another tab" and takes over when the first one closes.
 
 ![The laptop version, with the shopping list beside the cards](docs/screenshots/laptop-light.png)
 
