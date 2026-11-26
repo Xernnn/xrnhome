@@ -559,6 +559,30 @@ class SyncServerTest(unittest.TestCase):
         with open(os.path.join(self.data, "users", "alex", "daily", daily[0])) as f:
             self.assertEqual("item 0", json.load(f)["data"]["items"][0]["name"])
 
+    def test_a_copy_replaced_after_a_rollback_stays_in_the_history(self):
+        # state.json put back from the day's first copy, version 1 (by hand, or by read_state after
+        # damage), while the history held 5 to 24. The copy the next write replaced was filed as
+        # 1.json and, the lowest number, deleted at once; until the version passed 24, every
+        # replaced copy went the same way.
+        v = '"0"'
+        for n in range(srv.KEEP_VERSIONS + 5):
+            v = self.call("PUT", "/state", snapshot(f"item {n}"), {"If-Match": v})[2]["ETag"]
+        folder = os.path.join(self.data, "users", "alex")
+        history = os.path.join(folder, "history")
+        numbers = lambda: sorted(int(n[:-5]) for n in os.listdir(history))  # noqa: E731
+        self.assertEqual(list(range(5, 25)), numbers())
+        daily = os.path.join(folder, "daily")
+        with open(os.path.join(daily, os.listdir(daily)[0]), encoding="utf-8") as f:
+            first = f.read()
+        with open(os.path.join(folder, "state.json"), "w", encoding="utf-8") as f:
+            f.write(first)
+        self.assertEqual(200, self.call("PUT", "/state", snapshot("after the rollback"), {"If-Match": '"1"'})[0])
+        self.assertEqual([1] + list(range(6, 25)), numbers())  # the oldest filed goes instead: 5.json
+        self.assertEqual(200, self.call("PUT", "/state", snapshot("and again"), {"If-Match": '"2"'})[0])
+        self.assertEqual([1, 2] + list(range(7, 25)), numbers())
+        with open(os.path.join(history, "1.json"), encoding="utf-8") as f:
+            self.assertEqual("item 0", json.load(f)["data"]["items"][0]["name"])
+
     def test_photos_nothing_names_any_more_are_swept(self):
         folder = os.path.join(self.data, "users", "alex", "photos")
         for name in ("kept.jpg", "old.jpg", "new.jpg"):

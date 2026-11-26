@@ -557,9 +557,12 @@ def keep_old(user, cur):
         return
     history = user_dir(user, "history")
     write_json(os.path.join(history, f"{cur['version']}.json"), cur)
-    versions = sorted(int(n[:-5]) for n in os.listdir(history) if re.fullmatch(r"\d+\.json", n))
-    for v in versions[:-KEEP_VERSIONS]:
-        os.remove(os.path.join(history, f"{v}.json"))
+    # The oldest filed go, not the lowest numbers: once state.json is put back from an older copy
+    # the numbers go backwards, and the copy just filed was the lowest, so it went at once.
+    names = [n for n in os.listdir(history) if re.fullmatch(r"\d+\.json", n)]
+    names.sort(key=lambda n: (os.stat(os.path.join(history, n)).st_mtime_ns, int(n[:-5])))
+    for n in names[:-KEEP_VERSIONS]:
+        os.remove(os.path.join(history, n))
 
     daily = user_dir(user, "daily")
     day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
