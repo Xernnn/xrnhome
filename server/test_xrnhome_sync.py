@@ -47,6 +47,7 @@ class SyncServerTest(unittest.TestCase):
         srv.failures.clear()
         srv.checking.clear()
         srv.auth_cache.clear()
+        srv.refused.clear()
         srv.pruned.clear()
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), srv.Handler)
         self.httpd.daemon_threads = True
@@ -372,6 +373,24 @@ class SyncServerTest(unittest.TestCase):
         self.assertEqual(1, checks("alex:nope"))
         self.assertEqual(1, checks("nobody:nope"))  # none: the answer came sooner, and said so
         self.assertIsNone(srv.check_login("Basic " + base64.b64encode(b"nobody:secret").decode()))
+
+    def test_the_same_wrong_password_again_costs_no_second_check(self):
+        # A device still sending the password from before it was changed counts once against the
+        # lockout, by design, but each of its tries ran bcrypt again, a third of a second of the
+        # old phone's CPU every time.
+        import bcrypt
+
+        users = srv.args.users
+        with unittest.mock.patch.object(bcrypt, "checkpw", wraps=bcrypt.checkpw) as checkpw:
+            answers = [self.call("GET", "/state", password="before-the-change")[0] for _ in range(4)]
+            self.assertEqual(([401] * 4, 1), (answers, checkpw.call_count))
+            self.assertEqual(401, self.call("GET", "/state", password="another guess")[0])
+            self.assertEqual(2, checkpw.call_count)  # a new one is checked
+            # The users file changes, to the password that device has: it's checked again, and right.
+            with open(users, "w") as f:
+                f.write("alex:" + bcrypt.hashpw(b"before-the-change", bcrypt.gensalt(4)).decode() + "\n")
+            os.utime(users, (time.time() + 5, time.time() + 5))
+            self.assertEqual(200, self.call("GET", "/state", password="before-the-change")[0])
 
     def timed(self, addr, password):
         start = time.monotonic()
