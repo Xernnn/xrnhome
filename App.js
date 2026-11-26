@@ -31,6 +31,7 @@ import HomeServerScreen from "./src/screens/HomeServerScreen";
 import CategoriesScreen from "./src/screens/CategoriesScreen";
 import DataProblemScreen from "./src/screens/DataProblemScreen";
 import ErrorBoundary from "./src/components/ErrorBoundary";
+import OneTab from "./src/components/OneTab";
 import UndoToast from "./src/components/UndoToast";
 import WebDialogs, { installWebDialogs } from "./src/components/WebDialogs";
 import DesktopApp from "./src/desktop/DesktopApp";
@@ -256,13 +257,16 @@ export default function App() {
     <ErrorBoundary>
       <SafeAreaProvider>
         <ThemeProvider>
-          <InventoryProvider>
-            <RemindersProvider>
-              <SyncProvider>
-                <RootNavigation />
-              </SyncProvider>
-            </RemindersProvider>
-          </InventoryProvider>
+          {/* One tab of the laptop version at a time: they share one browser's storage. */}
+          <OneTab>
+            <InventoryProvider>
+              <RemindersProvider>
+                <SyncProvider>
+                  <RootNavigation />
+                </SyncProvider>
+              </RemindersProvider>
+            </InventoryProvider>
+          </OneTab>
           {Platform.OS === "web" ? <WebDialogs /> : null}
         </ThemeProvider>
       </SafeAreaProvider>
